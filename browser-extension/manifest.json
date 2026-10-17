@@ -13,13 +13,12 @@
     "http://127.0.0.1:49152/*"
   ],
   "background": {
-    "service_worker": "background.js",
     "scripts": ["background.js"]
   },
   "browser_specific_settings": {
     "gecko": {
       "id": "browser-guard@genesisseek.io",
-      "strict_min_version": "121.0"
+      "strict_min_version": "109.0"
     }
   },
   "content_scripts": [

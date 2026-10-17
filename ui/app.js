@@ -844,6 +844,19 @@ window.installForBrowser = async function (browserId) {
 
   try {
     const res = await invokeBackend("install_browser_guard_extension", { browserId });
+    const targetClip =
+      browserId === "firefox"
+        ? `${res.extension_path}/manifest.json`
+        : res.extension_path;
+    if (navigator.clipboard && targetClip) {
+      await navigator.clipboard.writeText(targetClip).catch(() => {});
+    }
+
+    const tipHtml =
+      browserId === "firefox"
+        ? `<strong>Firefox Quick Load (Copied to Clipboard):</strong> In the Firefox <code>about:debugging#/runtime/this-firefox</code> tab that just opened, click <strong>Load Temporary Add-on...</strong> and select <code>${res.extension_path}/manifest.json</code>.`
+        : `<strong>Chromium Quick Load (Copied to Clipboard):</strong> Open <code>chrome://extensions</code>, enable <em>Developer mode</em>, click <strong>Load unpacked</strong>, and select <code>${res.extension_path}</code>.`;
+
     feedback.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div>
@@ -854,7 +867,7 @@ window.installForBrowser = async function (browserId) {
       </div>
       <p class="small" style="margin-top:10px;white-space:pre-line;">${res.message}</p>
       <p class="muted small" style="margin-top:8px;">
-        <strong>Quick Manual Pinning Tip:</strong> In Chrome/Brave/Edge, open <code>chrome://extensions</code>, enable <em>Developer mode</em>, click <strong>Load unpacked</strong>, and select <code>${res.extension_path}</code>.
+        ${tipHtml}
       </p>
     `;
     await refreshEvents();

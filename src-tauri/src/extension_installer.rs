@@ -1,8 +1,12 @@
 use crate::realtime_shield;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectedBrowser {
@@ -45,11 +49,213 @@ pub fn resolve_extension_dir() -> PathBuf {
     PathBuf::from("/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension")
 }
 
+/// Recursively copy a directory (including `icons/` subdirectory) so staged unpacked extensions
+/// never fail due to missing `icons/icon-16.png` etc.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_path)?;
+        } else {
+            fs::copy(entry.path(), dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write a browser-tailored `manifest.json` so neither Firefox (which prefers `background.scripts` + `gecko`)
+/// nor Chromium/Chrome/Brave/Edge (which require `background.service_worker` only in MV3) rejects the manifest.
+fn write_browser_manifest(target_dir: &Path, is_firefox: bool) {
+    let manifest_json = if is_firefox {
+        r#"{
+  "manifest_version": 3,
+  "name": "Genesis Seek Browser Guard",
+  "version": "0.1.0",
+  "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:49152/*"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-guard@genesisseek.io",
+      "strict_min_version": "109.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_guard.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "genesis_seek_blocklist",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Genesis Seek Browser Guard",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
+}
+"#
+    } else {
+        r#"{
+  "manifest_version": 3,
+  "name": "Genesis Seek Browser Guard",
+  "version": "0.1.0",
+  "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
+  "permissions": [
+    "tabs",
+    "storage",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:49152/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content_guard.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "genesis_seek_blocklist",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Genesis Seek Browser Guard",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
+}
+"#
+    };
+
+    let _ = fs::write(target_dir.join("manifest.json"), manifest_json);
+}
+
+/// Read a length-prefixed JSON packet (`<len>:<json>`) from Firefox Marionette socket.
+fn marionette_read_packet(stream: &mut TcpStream) -> Result<String, String> {
+    let mut len_buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        stream.read_exact(&mut byte).map_err(|e| e.to_string())?;
+        if byte[0] == b':' {
+            break;
+        }
+        len_buf.push(byte[0]);
+        if len_buf.len() > 16 {
+            return Err("Invalid Marionette packet header".to_string());
+        }
+    }
+    let len_str = String::from_utf8_lossy(&len_buf);
+    let len: usize = len_str.parse().map_err(|e: std::num::ParseIntError| e.to_string())?;
+    let mut payload = vec![0u8; len];
+    stream.read_exact(&mut payload).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&payload).to_string())
+}
+
+fn marionette_send_packet(stream: &mut TcpStream, json_payload: &str) -> Result<(), String> {
+    let formatted = format!("{}:{}", json_payload.len(), json_payload);
+    stream.write_all(formatted.as_bytes()).map_err(|e| e.to_string())?;
+    stream.flush().map_err(|e| e.to_string())
+}
+
+/// Attempt to install the extension automatically into Firefox via Marionette (`127.0.0.1:2828`).
+fn try_firefox_marionette_install(ext_path: &str) -> Result<String, String> {
+    let addr: SocketAddr = "127.0.0.1:2828".parse().unwrap();
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(900))
+        .map_err(|e| e.to_string())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(4)));
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(4)));
+
+    // 1. Read greeting
+    let _greeting = marionette_read_packet(&mut stream)?;
+
+    // 2. WebDriver:NewSession
+    marionette_send_packet(&mut stream, r#"[0,1,"WebDriver:NewSession",{}]"#)?;
+    let _session = marionette_read_packet(&mut stream)?;
+
+    // 3. Addon:Install
+    let escaped_path = ext_path.replace('\\', "\\\\").replace('"', "\\\"");
+    let install_cmd = format!(
+        r#"[0,2,"Addon:Install",{{"path":"{}","temporary":true}}]"#,
+        escaped_path
+    );
+    marionette_send_packet(&mut stream, &install_cmd)?;
+    let install_resp = marionette_read_packet(&mut stream)?;
+
+    // 4. WebDriver:DeleteSession (disconnect cleanly so browser remains normal)
+    let _ = marionette_send_packet(&mut stream, r#"[0,3,"WebDriver:DeleteSession",{}]"#);
+    let _ = marionette_read_packet(&mut stream);
+
+    if install_resp.contains("browser-guard@genesisseek.io") || install_resp.contains(r#""value""#) {
+        Ok(install_resp)
+    } else {
+        Err(format!("Marionette response: {}", install_resp))
+    }
+}
+
 /// Detect installed web browsers across Linux and Windows.
 pub fn detect_installed_browsers() -> Vec<DetectedBrowser> {
     let ext_dir = resolve_extension_dir().to_string_lossy().to_string();
 
     let candidates = [
+        (
+            "firefox",
+            "Mozilla Firefox",
+            vec![
+                "/usr/bin/firefox",
+                "/snap/bin/firefox",
+                r"C:\Program Files\Mozilla Firefox\firefox.exe",
+            ],
+        ),
         (
             "chrome",
             "Google Chrome",
@@ -89,15 +295,6 @@ pub fn detect_installed_browsers() -> Vec<DetectedBrowser> {
                 "/snap/bin/chromium",
             ],
         ),
-        (
-            "firefox",
-            "Mozilla Firefox",
-            vec![
-                "/usr/bin/firefox",
-                "/snap/bin/firefox",
-                r"C:\Program Files\Mozilla Firefox\firefox.exe",
-            ],
-        ),
     ];
 
     let mut results = Vec::new();
@@ -132,6 +329,19 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
         ));
     }
 
+    let is_firefox = browser_id == "firefox";
+    write_browser_manifest(&ext_path, is_firefox);
+
+    // Stage a complete recursive copy (including icons/!) into Downloads/Genesis-Seek-Browser-Guard
+    let mut staged_path_str = ext_path_str.clone();
+    if let Some(dl) = dirs::download_dir() {
+        let staged = dl.join("Genesis-Seek-Browser-Guard");
+        if copy_dir_recursive(&ext_path, &staged).is_ok() {
+            write_browser_manifest(&staged, is_firefox);
+            staged_path_str = staged.to_string_lossy().to_string();
+        }
+    }
+
     let browsers = detect_installed_browsers();
     let target = browsers
         .iter()
@@ -145,30 +355,15 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
             extension_dir: ext_path_str.clone(),
         });
 
-    // Also stage a copy into the user's Downloads/Genesis-Seek-Browser-Guard folder for easy access
-    if let Some(dl) = dirs::download_dir() {
-        let staged = dl.join("Genesis-Seek-Browser-Guard");
-        let _ = fs::create_dir_all(&staged);
-        if let Ok(entries) = fs::read_dir(&ext_path) {
-            for entry in entries.flatten() {
-                if entry.path().is_file() {
-                    let dest = staged.join(entry.file_name());
-                    let _ = fs::copy(entry.path(), dest);
-                }
-            }
-        }
-    }
-
-    // If the browser is installed and is Chromium-based (Chrome, Brave, Edge, Chromium),
-    // launch it with `--load-extension=<path>` so the extension is loaded immediately!
-    if target.installed && !target.binary_path.is_empty() && browser_id != "firefox" {
+    // 1. Chromium-based browsers (Chrome, Brave, Edge, Chromium): launch with `--load-extension=<path>`
+    if target.installed && !target.binary_path.is_empty() && !is_firefox {
         let load_arg = format!("--load-extension={}", ext_path_str);
-        let spawn_res = Command::new(&target.binary_path)
+        if Command::new(&target.binary_path)
             .arg(&load_arg)
             .arg("chrome://extensions")
-            .spawn();
-
-        if spawn_res.is_ok() {
+            .spawn()
+            .is_ok()
+        {
             realtime_shield::log_security_event(
                 "Browser Guard",
                 "Info",
@@ -178,53 +373,123 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
             );
 
             return Ok(ExtensionInstallResult {
-                browser_name: target.name.clone(),
+                browser_name: target.name,
                 success: true,
-                extension_path: ext_path_str,
+                extension_path: staged_path_str,
                 method_used: "Direct Browser Launch (--load-extension)".to_string(),
-                message: format!(
-                    "{} was launched with Genesis Seek Browser Guard pre-loaded! You can also pin it from the extensions toolbar.",
-                    target.name
-                ),
+                message: "Browser launched with Genesis Seek Browser Guard pre-loaded!".to_string(),
             });
         }
     }
 
-    // For Firefox or if launching the browser in the sandbox wasn't possible, open the extension directory
-    // and provide one-click instructions.
+    // 2. Mozilla Firefox:
+    //    - Try instant Marionette auto-install if port 2828 is open (or launch Firefox with --marionette if not running)
+    //    - Also open `about:debugging#/runtime/this-firefox` so if Firefox was already open without --marionette,
+    //      clicking "Load Temporary Add-on..." and selecting `manifest.json` in `Downloads/Genesis-Seek-Browser-Guard` works immediately!
+    if is_firefox && target.installed && !target.binary_path.is_empty() {
+        if try_firefox_marionette_install(&ext_path_str).is_ok() {
+            realtime_shield::log_security_event(
+                "Browser Guard",
+                "Info",
+                "Auto-Installed Browser Guard into Mozilla Firefox",
+                &ext_path_str,
+                "Extension Active",
+            );
+            return Ok(ExtensionInstallResult {
+                browser_name: target.name,
+                success: true,
+                extension_path: staged_path_str,
+                method_used: "Firefox Automatic Add-on Installer".to_string(),
+                message: "Genesis Seek Browser Guard has been automatically installed and activated in Mozilla Firefox!".to_string(),
+            });
+        }
+
+        // Launch Firefox with `--marionette` and `about:debugging#/runtime/this-firefox`
+        let _ = Command::new(&target.binary_path)
+            .arg("--marionette")
+            .arg("about:debugging#/runtime/this-firefox")
+            .spawn();
+
+        // Wait up to 3.5s to see if Firefox started a new instance with Marionette enabled
+        for _ in 0..10 {
+            thread::sleep(Duration::from_millis(350));
+            if try_firefox_marionette_install(&ext_path_str).is_ok() {
+                realtime_shield::log_security_event(
+                    "Browser Guard",
+                    "Info",
+                    "Auto-Installed Browser Guard into Mozilla Firefox",
+                    &ext_path_str,
+                    "Extension Active",
+                );
+                return Ok(ExtensionInstallResult {
+                    browser_name: target.name,
+                    success: true,
+                    extension_path: staged_path_str,
+                    method_used: "Firefox Automatic Add-on Installer".to_string(),
+                    message: "Genesis Seek Browser Guard was automatically loaded into Mozilla Firefox! Look for the shield icon in your Firefox Extensions puzzle menu.".to_string(),
+                });
+            }
+        }
+
+        let manifest_file = Path::new(&staged_path_str)
+            .join("manifest.json")
+            .to_string_lossy()
+            .to_string();
+
+        realtime_shield::log_security_event(
+            "Browser Guard",
+            "Info",
+            "Opened Firefox Add-on Loader (about:debugging)",
+            &manifest_file,
+            "Ready to Select manifest.json",
+        );
+
+        return Ok(ExtensionInstallResult {
+            browser_name: target.name,
+            success: true,
+            extension_path: staged_path_str.clone(),
+            method_used: "Firefox Add-on Loader Opened (about:debugging)".to_string(),
+            message: format!(
+                "Firefox has opened the Add-on Loader tab (about:debugging#/runtime/this-firefox)!\n\n\
+                 1. Click 'Load Temporary Add-on...' in the Firefox tab that just opened.\n\
+                 2. Open Downloads -> Genesis-Seek-Browser-Guard and select:\n   {}",
+                manifest_file
+            ),
+        });
+    }
+
     #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("xdg-open").arg(&ext_path_str).spawn();
+        let _ = Command::new("xdg-open").arg(&staged_path_str).spawn();
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("explorer.exe").arg(&ext_path_str).spawn();
+        let _ = Command::new("explorer.exe").arg(&staged_path_str).spawn();
     }
-
-    realtime_shield::log_security_event(
-        "Browser Guard",
-        "Info",
-        &format!("Prepared Browser Guard Package for {}", target.name),
-        &ext_path_str,
-        "Ready to Enable",
-    );
 
     Ok(ExtensionInstallResult {
         browser_name: target.name.clone(),
         success: true,
-        extension_path: ext_path_str.clone(),
-        method_used: "Staged Extension Package & Folder Opened".to_string(),
+        extension_path: staged_path_str.clone(),
+        method_used: "Staged Extension Package".to_string(),
         message: format!(
-            "Extension staged at:\n{}\n\nAlso copied to your Downloads/Genesis-Seek-Browser-Guard folder for instant installation in {}.",
-            ext_path_str, target.name
+            "Extension staged (with all icons and manifest) at:\n{}",
+            staged_path_str
         ),
     })
 }
 
-/// Open the unpacked browser extension folder in the native OS file manager (Windows Explorer / Linux File Manager).
+/// Open the unpacked browser extension folder in the native OS file manager.
 pub fn open_extension_directory() -> Result<String, String> {
     let ext_path = resolve_extension_dir();
-    let ext_path_str = ext_path.to_string_lossy().to_string();
+    let mut target_dir = ext_path.clone();
+    if let Some(dl) = dirs::download_dir() {
+        let staged = dl.join("Genesis-Seek-Browser-Guard");
+        if copy_dir_recursive(&ext_path, &staged).is_ok() {
+            target_dir = staged;
+        }
+    }
+    let ext_path_str = target_dir.to_string_lossy().to_string();
 
     #[cfg(target_os = "linux")]
     {
