@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="gsCreamGold" x1="14" y1="8" x2="106" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#c69d53" />
+      <stop offset="50%" stop-color="#9a7232" />
+      <stop offset="100%" stop-color="#0d9488" />
+    </linearGradient>
+    <linearGradient id="gsCreamFill" x1="25" y1="16" x2="95" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f5ebd6" />
+      <stop offset="100%" stop-color="#e7d8bc" />
+    </linearGradient>
+    <linearGradient id="gsEmeraldGem" x1="42" y1="42" x2="78" y2="78" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#0f766e" />
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Brushed Gold & Teal Shield -->
+  <path d="M60 8L16 26.5V58.5C16 86.8 34.8 107.4 60 114C85.2 107.4 104 86.8 104 58.5V26.5L60 8Z"
+        fill="url(#gsCreamFill)"
+        stroke="url(#gsCreamGold)"
+        stroke-width="4.5"
+        stroke-linejoin="round" />
+
+  <!-- Inner Precision Bezel -->
+  <path d="M60 17L25 32V57.5C25 80.6 40.1 97.9 60 103.8C79.9 97.9 95 80.6 95 57.5V32L60 17Z"
+        stroke="#9a7232"
+        stroke-width="1.6"
+        stroke-opacity="0.5"
+        stroke-dasharray="4 3" />
+
+  <!-- Compass Rose Star Points -->
+  <path d="M60 23V40M60 76V93M27 58H44M76 58H93"
+        stroke="#8c6528"
+        stroke-width="3.2"
+        stroke-linecap="round" />
+
+  <!-- Concentric Ring -->
+  <circle cx="60" cy="58" r="19"
+          stroke="#b48a3e"
+          stroke-width="3" />
+
+  <!-- Faceted Emerald Core -->
+  <path d="M60 44L72 58L60 72L48 58L60 44Z"
+        fill="url(#gsEmeraldGem)" />
+  <circle cx="60" cy="58" r="3.5" fill="#faf7f0" />
+</svg>

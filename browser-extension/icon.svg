@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none">
+  <defs>
+    <linearGradient id="gsExtGrad" x1="12" y1="8" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00e5ff" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+  </defs>
+  <path d="M60 8L16 26.5V58.5C16 86.8 34.8 107.4 60 114C85.2 107.4 104 86.8 104 58.5V26.5L60 8Z"
+        fill="rgba(0, 229, 255, 0.14)"
+        stroke="url(#gsExtGrad)"
+        stroke-width="5"
+        stroke-linejoin="round" />
+  <path d="M60 26V41M60 75V90M30 58H45M75 58H90"
+        stroke="url(#gsExtGrad)"
+        stroke-width="3.5"
+        stroke-linecap="round" />
+  <circle cx="60" cy="58" r="18" stroke="#10b981" stroke-width="3.2" />
+  <path d="M60 46L70 58L60 70L50 58L60 46Z" fill="url(#gsExtGrad)" />
+</svg>

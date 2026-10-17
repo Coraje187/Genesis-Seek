@@ -1,0 +1,13 @@
+# Rust / Tauri build artifacts
+src-tauri/target/
+target/
+**/*.rs.bk
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+node_modules/
+dist/

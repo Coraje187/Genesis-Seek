@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Genesis Seek — Lightweight Endpoint & Browser Defense</title>
+  <!-- Pre-paint persistent theme loader so your theme choice is remembered immediately without flash -->
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("genesis_seek_theme");
+        if (saved === "cream" || saved === "night") {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo-wrap">
+          <img
+            id="brand-logo-img"
+            src="assets/logo-mark.svg"
+            alt="Genesis Seek Crest"
+            width="42"
+            height="42"
+          />
+        </div>
+        <div>
+          <div class="brand-title">GENESIS SEEK</div>
+          <div class="brand-sub">Core Engine v0.2 • Cross-OS</div>
+        </div>
+      </div>
+
+      <nav class="nav-menu">
+        <button class="nav-item active" data-tab="dashboard">
+          <span class="nav-dot"></span> Dashboard & Shields
+        </button>
+        <button class="nav-item" data-tab="scanner">
+          <span class="nav-dot"></span> Threat Scanner
+        </button>
+        <button class="nav-item" data-tab="browser-guard">
+          <span class="nav-dot"></span> Browser & Web Guard
+        </button>
+        <button class="nav-item" data-tab="network-intel">
+          <span class="nav-dot"></span> Network & Threat Feeds
+        </button>
+        <button class="nav-item" data-tab="processes">
+          <span class="nav-dot"></span> Process & Startup Guard
+        </button>
+        <button class="nav-item" data-tab="quarantine">
+          <span class="nav-dot"></span> Quarantine Vault
+          <span id="quarantine-badge" class="badge">0</span>
+        </button>
+        <button class="nav-item" data-tab="events">
+          <span class="nav-dot"></span> Real-Time Event Log
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="telemetry-row">
+          <span>Engine Footprint</span>
+          <strong class="text-accent">~14.2 MB RAM</strong>
+        </div>
+        <div class="telemetry-row">
+          <span>Threat Intel DB</span>
+          <strong id="sidebar-feed-ver" class="text-ok">v2026.10.16.01</strong>
+        </div>
+        <div class="telemetry-row">
+          <span>Browser Bridge</span>
+          <strong id="bridge-indicator" class="text-ok">127.0.0.1:49152</strong>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Status Header -->
+      <header class="topbar">
+        <div class="status-pill" id="overall-status-pill">
+          <span class="pulse-dot" id="overall-pulse"></span>
+          <span id="overall-status-text">All Real-Time Shields Active — Endpoint Protected</span>
+        </div>
+
+        <div class="topbar-actions">
+          <!-- Persistent Theme Switcher: Obsidian Night vs Warm Cream Light -->
+          <div class="theme-switcher" role="group" aria-label="Appearance Theme">
+            <button type="button" class="theme-btn" id="theme-btn-night" data-set-theme="night" title="Sleek Obsidian Night Theme">
+              🌙 Night
+            </button>
+            <button type="button" class="theme-btn" id="theme-btn-cream" data-set-theme="cream" title="Elegant Warm Cream Light Theme">
+              ☀️ Cream Light
+            </button>
+          </div>
+
+          <button class="btn btn-outline" id="btn-generate-eicar" title="Creates a safe industry-standard EICAR test file in Downloads to verify detection">
+            + Drop Safe EICAR Sample
+          </button>
+          <button class="btn btn-primary" id="btn-quick-scan-top">
+            Run Quick Scan
+          </button>
+        </div>
+      </header>
+
+      <!-- TAB 1: DASHBOARD & REAL-TIME SHIELDS -->
+      <section class="tab-panel active" id="tab-dashboard">
+        <div class="hero-grid">
+          <div class="hero-card">
+            <div class="ring-container">
+              <div class="protection-ring" id="protection-ring">
+                <div class="ring-inner">
+                  <img
+                    id="hero-crest-img"
+                    src="assets/logo-mark.svg"
+                    alt="Crest"
+                    width="30"
+                    height="30"
+                    style="margin-bottom: 2px;"
+                  />
+                  <div class="ring-score" id="protection-score">100%</div>
+                  <div class="ring-label">SHIELD INTEGRITY</div>
+                </div>
+              </div>
+            </div>
+            <div class="hero-details">
+              <h2>Multi-Layered Endpoint & Browser Defense</h2>
+              <p class="muted">
+                Genesis Seek combines SHA-256 cryptographic hashing, YARA behavioral heuristics, Shannon entropy packer analysis, Ransomware canary tripwires, live TCP socket inspection, and real-time Browser Guard filtering.
+              </p>
+              <div class="hero-stats">
+                <div class="stat-box">
+                  <span class="stat-val" id="stat-scanned">0</span>
+                  <span class="stat-lbl">Files Inspected</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-val" id="stat-threats">0</span>
+                  <span class="stat-lbl">Threats Neutralized</span>
+                </div>
+                <div class="stat-box">
+                  <span class="stat-val" id="stat-web-blocks">0</span>
+                  <span class="stat-lbl">Web/Phishing Blocks</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Real-Time Protection Toggles -->
+          <div class="shield-card">
+            <h3>Real-Time Protection Layers</h3>
+            <p class="muted small">Continuous background watchers across Windows & Linux</p>
+
+            <div class="shield-toggle-list">
+              <div class="shield-row">
+                <div>
+                  <div class="shield-name">Malware & File System Guard</div>
+                  <div class="shield-desc">Scans new/modified files in Downloads, Desktop & Temp</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-file-guard" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="shield-row">
+                <div>
+                  <div class="shield-name">Web & Browser Guard</div>
+                  <div class="shield-desc">Blocks phishing, IDN homographs, cryptojackers & malvertising</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-web-guard" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="shield-row">
+                <div>
+                  <div class="shield-name">Ransomware Canary Shield</div>
+                  <div class="shield-desc">Monitors decoy tripwire files & shadow-copy deletion commands</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-ransomware-guard" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <div class="shield-row">
+                <div>
+                  <div class="shield-name">Exploit, Process & Socket Guard</div>
+                  <div class="shield-desc">Flags volatile `/dev/shm` or `Temp` execution, C2 ports & shells</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="toggle-process-guard" checked />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Activity Feed Preview -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Live Protection Telemetry</h3>
+            <span class="pill-tag">Real-Time Stream</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Module</th>
+                  <th>Severity</th>
+                  <th>Event</th>
+                  <th>Target</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-events-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: THREAT SCANNER -->
+      <section class="tab-panel" id="tab-scanner">
+        <div class="scan-modes-grid">
+          <div class="scan-mode-card">
+            <div class="mode-badge">FAST • &lt; 5s</div>
+            <h3>Quick Threat Scan</h3>
+            <p class="muted">Scans high-risk drop zones: Downloads, Desktop, and OS Temporary folders for active droppers and scripts.</p>
+            <button class="btn btn-primary full-width" data-scan="quick">Start Quick Scan</button>
+          </div>
+
+          <div class="scan-mode-card">
+            <div class="mode-badge accent">RECOMMENDED</div>
+            <h3>Deep Heuristic & YARA Scan</h3>
+            <p class="muted">Inspects user configurations, startup paths, shared memory (`/dev/shm` / `AppData`), and packed binaries.</p>
+            <button class="btn btn-primary full-width" data-scan="threat">Start Deep Threat Scan</button>
+          </div>
+
+          <div class="scan-mode-card">
+            <div class="mode-badge">TARGETED</div>
+            <h3>Custom Directory Scan</h3>
+            <p class="muted">Specify any directory path on Windows (`C:\Users\...`) or Linux (`/home/...`) for multi-engine analysis.</p>
+            <div class="custom-scan-input">
+              <input type="text" id="custom-scan-path" placeholder="e.g. /tmp or C:\Users\Public" />
+              <button class="btn btn-outline" id="btn-custom-scan">Scan</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-card" id="scan-results-panel">
+          <div class="panel-header">
+            <div>
+              <h3 id="scan-status-heading">Scanner Ready</h3>
+              <p class="muted small" id="scan-summary-sub">Select a scan mode above or generate a safe EICAR test file to verify detection.</p>
+            </div>
+            <div id="scan-metrics-pill" class="pill-tag">Idle</div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Threat Name</th>
+                  <th>Category</th>
+                  <th>Severity</th>
+                  <th>Engine / Entropy</th>
+                  <th>File Path</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="scan-detections-tbody">
+                <tr>
+                  <td colspan="6" class="empty-cell">No active threats detected. Your system looks clean!</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: BROWSER & WEB GUARD -->
+      <section class="tab-panel" id="tab-browser-guard">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Genesis Seek Browser Guard & URL Reputation Analyzer</h3>
+              <p class="muted small">
+                Test any URL or domain against our real-time Phishing, IDN Homograph, Cryptojacking, Abuse.ch URLhaus feed, and Raw-IP Malware Payload filters.
+              </p>
+            </div>
+            <span class="pill-tag">Loopback Port 49152</span>
+          </div>
+
+          <div class="url-tester-bar">
+            <input type="text" id="url-check-input" placeholder="Enter URL to inspect (e.g. https://paypa1-security-verify.com or https://coinhive.com)" />
+            <button class="btn btn-primary" id="btn-check-url">Inspect URL</button>
+          </div>
+
+          <div class="preset-chips">
+            <span class="muted small">Quick Test Samples:</span>
+            <button class="chip" data-url="https://paypa1-security-verify.com/login">Phishing Typosquat</button>
+            <button class="chip" data-url="https://coinhive.com/lib/coinhive.min.js">Cryptojacker Host</button>
+            <button class="chip" data-url="https://xn--80ak6aa92e.com">IDN Homograph (Punycode)</button>
+            <button class="chip" data-url="https://urlhaus-malware-drop.ru/payload.bin">URLhaus Live Feed IOC</button>
+            <button class="chip" data-url="http://198.51.100.42/invoice_update.exe">Raw IP .EXE Dropper</button>
+            <button class="chip" data-url="https://github.com">Clean Trusted Domain</button>
+          </div>
+
+          <div id="url-result-card" class="url-result-card hidden"></div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>One-Click Browser Guard Extension Installer</h3>
+              <p class="muted small">
+                Install or launch the <strong>Genesis Seek Browser Guard</strong> (Manifest V3) directly into your preferred browser on Windows or Linux.
+              </p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-outline" id="btn-copy-ext-path">Copy Extension Path</button>
+              <button class="btn btn-outline" id="btn-open-ext-folder">Open Extension Folder</button>
+            </div>
+          </div>
+
+          <div class="scan-modes-grid" id="browser-installer-grid" style="margin-top:10px;">
+            <!-- Populated dynamically by app.js -->
+          </div>
+
+          <div id="ext-install-feedback" class="url-result-card hidden"></div>
+        </div>
+      </section>
+
+      <!-- TAB 4: NETWORK & THREAT FEEDS -->
+      <section class="tab-panel" id="tab-network-intel">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Automated Cloud Threat Intelligence Feeds</h3>
+              <p class="muted small">Synchronizes SHA-256 malware hashes, URLhaus C2 hosts, OpenPhish domains, and YARA rules.</p>
+            </div>
+            <button class="btn btn-primary" id="btn-sync-feeds">↻ Sync Cloud Threat Feeds Now</button>
+          </div>
+
+          <div class="hero-stats" style="margin-top:8px;">
+            <div class="stat-box">
+              <span class="stat-val" id="feed-hashes-count">148,520</span>
+              <span class="stat-lbl">SHA-256 Malware Signatures</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val" id="feed-web-count">64,290</span>
+              <span class="stat-lbl">Malicious Domains & URLs</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val" id="feed-yara-count">412</span>
+              <span class="stat-lbl">YARA & Heuristic Rules</span>
+            </div>
+          </div>
+
+          <div id="feed-sources-list" class="preset-chips" style="margin-top:14px;"></div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Live Network Socket & C2 Connection Inspector</h3>
+              <p class="muted small">Monitors active TCP sockets (`/proc/net/tcp` on Linux, `netstat` on Windows) for reverse shells (port 4444), Stratum miners (3333/14444), and C2 relays.</p>
+            </div>
+            <button class="btn btn-outline" id="btn-refresh-network">Refresh Sockets</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Protocol</th>
+                  <th>Local Socket</th>
+                  <th>Remote Endpoint</th>
+                  <th>State</th>
+                  <th>Risk Assessment</th>
+                  <th>Analysis</th>
+                </tr>
+              </thead>
+              <tbody id="network-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 5: PROCESS & STARTUP GUARD -->
+      <section class="tab-panel" id="tab-processes">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Live Process & Memory Risk Inspector</h3>
+              <p class="muted small">Monitors running executables for `/tmp` or `/dev/shm` execution, masquerading system processes, and suspicious command-line flags.</p>
+            </div>
+            <button class="btn btn-outline" id="btn-refresh-processes">Refresh Processes</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>PID</th>
+                  <th>Process Name</th>
+                  <th>CPU / RAM</th>
+                  <th>Risk Assessment</th>
+                  <th>Executable / Reason</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="processes-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Startup & Persistence Hooks</h3>
+              <p class="muted small">Audits Linux Autostart (<code>.desktop</code>), Systemd user units, shell profiles (<code>.bashrc</code>), and Windows Startup folders.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Persistence Vector</th>
+                  <th>Entry Name</th>
+                  <th>Command / Hook Detail</th>
+                  <th>Path</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="persistence-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: QUARANTINE VAULT -->
+      <section class="tab-panel" id="tab-quarantine">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <h3>Encrypted Quarantine Vault (<code>.gsvault</code>)</h3>
+              <p class="muted small">Isolated files are XOR-encrypted and stripped of execution permissions so they cannot harm your system. Restore false positives or shred permanently.</p>
+            </div>
+            <button class="btn btn-outline" id="btn-refresh-quarantine">Refresh Vault</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Quarantined At</th>
+                  <th>Threat Classification</th>
+                  <th>Severity</th>
+                  <th>Original Path</th>
+                  <th>SHA-256</th>
+                  <th>Vault Actions</th>
+                </tr>
+              </thead>
+              <tbody id="quarantine-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 7: REAL-TIME EVENT LOG -->
+      <section class="tab-panel" id="tab-events">
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Complete Endpoint & Browser Security Log</h3>
+            <span class="pill-tag">Audit Trail</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Protection Module</th>
+                  <th>Severity</th>
+                  <th>Event Summary</th>
+                  <th>Target</th>
+                  <th>Action Taken</th>
+                </tr>
+              </thead>
+              <tbody id="full-events-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
