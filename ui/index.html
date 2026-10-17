@@ -13,6 +13,27 @@
           document.documentElement.setAttribute("data-theme", saved);
         }
       } catch (e) {}
+
+      window.switchTab = function (tabName) {
+        if (!tabName) return;
+        var buttons = document.querySelectorAll(".nav-item");
+        for (var i = 0; i < buttons.length; i++) {
+          var isMatch = buttons[i].getAttribute("data-tab") === tabName;
+          buttons[i].classList.toggle("active", isMatch);
+        }
+        var panels = document.querySelectorAll(".tab-panel");
+        var targetId = "tab-" + tabName;
+        for (var j = 0; j < panels.length; j++) {
+          panels[j].classList.toggle("active", panels[j].id === targetId);
+        }
+        if (typeof window.onTabActivated === "function") {
+          try {
+            window.onTabActivated(tabName);
+          } catch (err) {
+            console.warn("Tab refresh error:", err);
+          }
+        }
+      };
     })();
   </script>
   <link rel="stylesheet" href="styles.css" />
@@ -37,27 +58,27 @@
         </div>
       </div>
 
-      <nav class="nav-menu">
-        <button class="nav-item active" data-tab="dashboard">
+      <nav class="nav-menu" id="sidebar-nav-menu">
+        <button type="button" class="nav-item active" data-tab="dashboard" onclick="window.switchTab('dashboard')">
           <span class="nav-dot"></span> Dashboard & Shields
         </button>
-        <button class="nav-item" data-tab="scanner">
+        <button type="button" class="nav-item" data-tab="scanner" onclick="window.switchTab('scanner')">
           <span class="nav-dot"></span> Threat Scanner
         </button>
-        <button class="nav-item" data-tab="browser-guard">
+        <button type="button" class="nav-item" data-tab="browser-guard" onclick="window.switchTab('browser-guard')">
           <span class="nav-dot"></span> Browser & Web Guard
         </button>
-        <button class="nav-item" data-tab="network-intel">
+        <button type="button" class="nav-item" data-tab="network-intel" onclick="window.switchTab('network-intel')">
           <span class="nav-dot"></span> Network & Threat Feeds
         </button>
-        <button class="nav-item" data-tab="processes">
+        <button type="button" class="nav-item" data-tab="processes" onclick="window.switchTab('processes')">
           <span class="nav-dot"></span> Process & Startup Guard
         </button>
-        <button class="nav-item" data-tab="quarantine">
+        <button type="button" class="nav-item" data-tab="quarantine" onclick="window.switchTab('quarantine')">
           <span class="nav-dot"></span> Quarantine Vault
           <span id="quarantine-badge" class="badge">0</span>
         </button>
-        <button class="nav-item" data-tab="events">
+        <button type="button" class="nav-item" data-tab="events" onclick="window.switchTab('events')">
           <span class="nav-dot"></span> Real-Time Event Log
         </button>
       </nav>

@@ -261,6 +261,16 @@ fn open_browser_extension_folder() -> Result<String, String> {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
+
     realtime_shield::spawn_realtime_file_watcher();
     realtime_shield::spawn_ransomware_canary();
     realtime_shield::spawn_process_monitor();

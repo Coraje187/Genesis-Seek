@@ -1,11 +1,24 @@
 // Genesis Seek — Frontend Controller (Tauri Native IPC + Persistent Theme Memory + Browser Fallback)
 
-const isTauri = Boolean(window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke);
 const THEME_STORAGE_KEY = "genesis_seek_theme";
+
+function safeGetStorage(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeSetStorage(key, val) {
+  try {
+    localStorage.setItem(key, val);
+  } catch (e) {}
+}
 
 // Local state for standalone preview mode if Tauri runtime isn't active
 const fallbackState = {
-  theme: localStorage.getItem(THEME_STORAGE_KEY) || "night",
+  theme: safeGetStorage(THEME_STORAGE_KEY) || "night",
   shields: {
     real_time_file_guard: true,
     web_browser_guard: true,
@@ -60,8 +73,16 @@ const fallbackState = {
 };
 
 async function invokeBackend(cmd, args = {}) {
-  if (isTauri) {
-    return await window.__TAURI__.core.invoke(cmd, args);
+  if (
+    window.__TAURI__ &&
+    window.__TAURI__.core &&
+    typeof window.__TAURI__.core.invoke === "function"
+  ) {
+    try {
+      return await window.__TAURI__.core.invoke(cmd, args);
+    } catch (err) {
+      console.warn(`Tauri IPC error on ${cmd}, using fallback:`, err);
+    }
   }
   return simulateBackend(cmd, args);
 }
@@ -69,10 +90,10 @@ async function invokeBackend(cmd, args = {}) {
 function simulateBackend(cmd, args) {
   switch (cmd) {
     case "get_user_preferences":
-      return { theme: localStorage.getItem(THEME_STORAGE_KEY) || fallbackState.theme || "night" };
+      return { theme: safeGetStorage(THEME_STORAGE_KEY) || fallbackState.theme || "night" };
     case "save_user_theme":
       fallbackState.theme = args.theme;
-      localStorage.setItem(THEME_STORAGE_KEY, args.theme);
+      safeSetStorage(THEME_STORAGE_KEY, args.theme);
       return { theme: args.theme };
     case "get_shield_state":
       return { ...fallbackState.shields };
@@ -368,20 +389,48 @@ document.querySelectorAll(".theme-btn").forEach((btn) => {
   });
 });
 
-// Tab Navigation
-document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
-    btn.classList.add("active");
-    const tabId = `tab-${btn.dataset.tab}`;
-    const panel = document.getElementById(tabId);
-    if (panel) panel.classList.add("active");
+// Tab Navigation (supports inline onclick, delegated nav-menu clicks, and programmatic switchTab)
+window.onTabActivated = function (tabName) {
+  if (tabName === "network-intel") refreshNetworkAndFeeds();
+  if (tabName === "processes") refreshProcessesAndPersistence();
+  if (tabName === "quarantine") refreshQuarantine();
+  if (tabName === "events" || tabName === "dashboard") refreshEvents();
+  if (tabName === "browser-guard") renderBrowserExtensionInstaller();
+};
 
-    if (btn.dataset.tab === "network-intel") refreshNetworkAndFeeds();
-    if (btn.dataset.tab === "processes") refreshProcessesAndPersistence();
-    if (btn.dataset.tab === "quarantine") refreshQuarantine();
-    if (btn.dataset.tab === "events" || btn.dataset.tab === "dashboard") refreshEvents();
+window.switchTab = function (tabName) {
+  if (!tabName) return;
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.tab === tabName);
+  });
+  document.querySelectorAll(".tab-panel").forEach((p) => {
+    p.classList.toggle("active", p.id === `tab-${tabName}`);
+  });
+  if (typeof window.onTabActivated === "function") {
+    try {
+      window.onTabActivated(tabName);
+    } catch (err) {
+      console.warn("Tab activation refresh error:", err);
+    }
+  }
+};
+
+const navMenuEl = document.getElementById("sidebar-nav-menu") || document.querySelector(".nav-menu");
+if (navMenuEl) {
+  navMenuEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".nav-item");
+    if (btn && btn.dataset.tab) {
+      window.switchTab(btn.dataset.tab);
+    }
+  });
+}
+
+document.querySelectorAll(".nav-item").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (btn.dataset.tab) {
+      window.switchTab(btn.dataset.tab);
+    }
   });
 });
 
@@ -447,7 +496,7 @@ function updateProtectionRing(state) {
 
 // Threat Scanner Actions
 async function triggerScan(scanType, customPath = null) {
-  document.querySelector('[data-tab="scanner"]').click();
+  window.switchTab("scanner");
   const heading = document.getElementById("scan-status-heading");
   const sub = document.getElementById("scan-summary-sub");
   const pill = document.getElementById("scan-metrics-pill");
@@ -851,17 +900,32 @@ document.getElementById("btn-open-ext-folder").addEventListener("click", async (
 
 // Initial Boot: Restore saved theme from localStorage AND native disk preferences
 (async function init() {
-  const localSaved = localStorage.getItem(THEME_STORAGE_KEY);
-  if (localSaved === "cream" || localSaved === "night") {
-    await applyTheme(localSaved, false);
-  } else {
-    const prefs = await invokeBackend("get_user_preferences");
-    await applyTheme((prefs && prefs.theme) || "night", false);
+  try {
+    const localSaved = safeGetStorage(THEME_STORAGE_KEY);
+    if (localSaved === "cream" || localSaved === "night") {
+      await applyTheme(localSaved, false);
+    } else {
+      const prefs = await invokeBackend("get_user_preferences");
+      await applyTheme((prefs && prefs.theme) || "night", false);
+    }
+  } catch (e) {
+    console.warn("Theme init fallback:", e);
   }
 
-  const st = await invokeBackend("get_shield_state");
-  updateProtectionRing(st);
-  await renderBrowserExtensionInstaller();
-  await refreshEvents();
-  await refreshQuarantine();
+  try {
+    const st = await invokeBackend("get_shield_state");
+    if (st) updateProtectionRing(st);
+  } catch (e) {}
+
+  try {
+    await renderBrowserExtensionInstaller();
+  } catch (e) {}
+
+  try {
+    await refreshEvents();
+  } catch (e) {}
+
+  try {
+    await refreshQuarantine();
+  } catch (e) {}
 })();
