@@ -6,6 +6,7 @@ mod quarantine;
 mod realtime_shield;
 mod scanner;
 mod threat_intel_and_net;
+mod tray_indicator;
 
 use extension_installer::{DetectedBrowser, ExtensionInstallResult};
 use process_guard::{PersistenceEntry, ProcessRiskItem};
@@ -15,6 +16,7 @@ use scanner::ScanReport;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use tauri::Manager;
 use threat_intel_and_net::{NetworkConnectionItem, ThreatFeedStatus};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,12 +66,35 @@ fn get_shield_state() -> ShieldState {
 #[tauri::command]
 fn update_shield_state(new_state: ShieldState) -> ShieldState {
     realtime_shield::save_shield_state(&new_state);
+    tray_indicator::notify_tray_updated();
+
+    let enabled_count = [
+        new_state.real_time_file_guard,
+        new_state.web_browser_guard,
+        new_state.ransomware_canary_guard,
+        new_state.exploit_process_guard,
+    ]
+    .iter()
+    .filter(|&&b| b)
+    .count();
+    let pct = enabled_count * 25;
+
     realtime_shield::log_security_event(
         "System",
-        "Info",
-        "Real-Time Protection Policy Updated",
-        "All Endpoint Shields",
-        "Synchronized",
+        if pct == 100 {
+            "Info"
+        } else if pct >= 50 {
+            "Medium"
+        } else {
+            "High"
+        },
+        &format!("Protection Level Now {}% ({}/4 Shields Active)", pct, enabled_count),
+        "Endpoint & Browser Shields",
+        if pct == 100 {
+            "100% Protected"
+        } else {
+            "Reduced Protection"
+        },
     );
     new_state
 }
@@ -260,6 +285,14 @@ fn open_browser_extension_folder() -> Result<String, String> {
     extension_installer::open_extension_directory()
 }
 
+#[tauri::command]
+fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    Ok(())
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     {
@@ -277,6 +310,10 @@ fn main() {
     realtime_shield::spawn_browser_guard_bridge();
 
     tauri::Builder::default()
+        .setup(|app| {
+            tray_indicator::register_desktop_bar_indicator(app.handle().clone());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_user_preferences,
             save_user_theme,
@@ -299,6 +336,7 @@ fn main() {
             get_detected_browsers,
             install_browser_guard_extension,
             open_browser_extension_folder,
+            minimize_to_bar,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Genesis Seek application");

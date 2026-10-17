@@ -442,57 +442,45 @@ function formatTime(iso) {
   }
 }
 
-// Shield Integrity Calculation
+// Shield Integrity Calculation (Each of the 4 layers = 25% of total 100% protection)
 async function syncShieldToggles() {
   const newState = {
-    real_time_file_guard: document.getElementById("toggle-file-guard").checked,
-    web_browser_guard: document.getElementById("toggle-web-guard").checked,
-    ransomware_canary_guard: document.getElementById("toggle-ransomware-guard").checked,
-    exploit_process_guard: document.getElementById("toggle-process-guard").checked,
+    real_time_file_guard: Boolean(document.getElementById("toggle-file-guard")?.checked),
+    web_browser_guard: Boolean(document.getElementById("toggle-web-guard")?.checked),
+    ransomware_canary_guard: Boolean(document.getElementById("toggle-ransomware-guard")?.checked),
+    exploit_process_guard: Boolean(document.getElementById("toggle-process-guard")?.checked),
     auto_quarantine_realtime: true,
   };
+  if (typeof window.recalculateProtectionNow === "function") {
+    window.recalculateProtectionNow(true);
+  }
   await invokeBackend("update_shield_state", { newState });
-  updateProtectionRing(newState);
-  refreshEvents();
+  await refreshEvents();
 }
+window.syncShieldToggles = syncShieldToggles;
 
 function updateProtectionRing(state) {
-  const enabledCount = [
-    state.real_time_file_guard,
-    state.web_browser_guard,
-    state.ransomware_canary_guard,
-    state.exploit_process_guard,
-  ].filter(Boolean).length;
-
-  const pct = enabledCount * 25;
-  const scoreEl = document.getElementById("protection-score");
-  const ringEl = document.getElementById("protection-ring");
-  const statusText = document.getElementById("overall-status-text");
-  const pulse = document.getElementById("overall-pulse");
-
-  scoreEl.textContent = `${pct}%`;
-  let color = "var(--accent-emerald)";
-  if (pct < 100 && pct >= 50) color = "var(--accent-amber)";
-  if (pct < 50) color = "var(--accent-danger)";
-
-  scoreEl.style.color = color;
-  ringEl.style.background = `conic-gradient(${color} 0% ${pct}%, var(--ring-track) ${pct}% 100%)`;
-  pulse.style.background = color;
-
-  statusText.textContent =
-    pct === 100
-      ? "All Real-Time Shields Active — Endpoint Protected"
-      : `${4 - enabledCount} Protection Layer(s) Disabled — Reduced Defense`;
+  if (state) {
+    const fg = document.getElementById("toggle-file-guard");
+    const wg = document.getElementById("toggle-web-guard");
+    const rg = document.getElementById("toggle-ransomware-guard");
+    const pg = document.getElementById("toggle-process-guard");
+    if (fg) fg.checked = Boolean(state.real_time_file_guard);
+    if (wg) wg.checked = Boolean(state.web_browser_guard);
+    if (rg) rg.checked = Boolean(state.ransomware_canary_guard);
+    if (pg) pg.checked = Boolean(state.exploit_process_guard);
+  }
+  if (typeof window.recalculateProtectionNow === "function") {
+    window.recalculateProtectionNow(true);
+  }
 }
 
-[
-  "toggle-file-guard",
-  "toggle-web-guard",
-  "toggle-ransomware-guard",
-  "toggle-process-guard",
-].forEach((id) => {
-  document.getElementById(id).addEventListener("change", syncShieldToggles);
-});
+const minBarBtn = document.getElementById("btn-minimize-bar");
+if (minBarBtn) {
+  minBarBtn.addEventListener("click", async () => {
+    await invokeBackend("minimize_to_bar");
+  });
+}
 
 // Threat Scanner Actions
 async function triggerScan(scanType, customPath = null) {
@@ -928,4 +916,12 @@ document.getElementById("btn-open-ext-folder").addEventListener("click", async (
   try {
     await refreshQuarantine();
   } catch (e) {}
+
+  // Keep UI synchronized if shield state is changed from the Desktop Bar tray menu
+  setInterval(async () => {
+    try {
+      const st = await invokeBackend("get_shield_state");
+      if (st) updateProtectionRing(st);
+    } catch (e) {}
+  }, 2500);
 })();
