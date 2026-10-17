@@ -347,6 +347,8 @@ function simulateBackend(cmd, args) {
     }
     case "open_browser_extension_folder":
       return "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension";
+    case "get_live_memory_usage":
+      return { pid: 86151, rss_mb: 174.2, private_mb: 44.8 };
     case "get_security_events":
       return [...fallbackState.events];
     default:
@@ -899,6 +901,17 @@ document.getElementById("btn-open-ext-folder").addEventListener("click", async (
   `;
 });
 
+async function refreshLiveMemory() {
+  try {
+    const mem = await invokeBackend("get_live_memory_usage");
+    const ramEl = document.getElementById("sidebar-ram-usage");
+    if (ramEl && mem && typeof mem.rss_mb === "number") {
+      ramEl.textContent = `${mem.rss_mb.toFixed(1)} MB RAM`;
+      ramEl.title = `PID ${mem.pid} • Total Resident RSS: ${mem.rss_mb.toFixed(1)} MB • Private Core: ${(mem.private_mb || mem.rss_mb).toFixed(1)} MB`;
+    }
+  } catch (e) {}
+}
+
 // Initial Boot: Restore saved theme from localStorage AND native disk preferences
 (async function init() {
   try {
@@ -918,6 +931,8 @@ document.getElementById("btn-open-ext-folder").addEventListener("click", async (
     if (st) updateProtectionRing(st);
   } catch (e) {}
 
+  await refreshLiveMemory();
+
   try {
     await renderBrowserExtensionInstaller();
   } catch (e) {}
@@ -930,11 +945,12 @@ document.getElementById("btn-open-ext-folder").addEventListener("click", async (
     await refreshQuarantine();
   } catch (e) {}
 
-  // Keep UI synchronized if shield state is changed from the Desktop Bar tray menu
+  // Keep UI synchronized with Desktop Bar tray menu and live RAM usage
   setInterval(async () => {
     try {
       const st = await invokeBackend("get_shield_state");
       if (st) updateProtectionRing(st);
+      await refreshLiveMemory();
     } catch (e) {}
   }, 2500);
 })();

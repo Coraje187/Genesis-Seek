@@ -285,6 +285,72 @@ fn open_browser_extension_folder() -> Result<String, String> {
     extension_installer::open_extension_directory()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryTelemetry {
+    pub pid: u32,
+    pub rss_mb: f64,
+    pub private_mb: f64,
+}
+
+#[tauri::command]
+fn get_live_memory_usage() -> MemoryTelemetry {
+    let pid = std::process::id();
+
+    #[cfg(target_os = "linux")]
+    {
+        let mut rss_kb: u64 = 0;
+        if let Ok(status) = fs::read_to_string("/proc/self/status") {
+            for line in status.lines() {
+                if let Some(rest) = line.strip_prefix("VmRSS:") {
+                    if let Some(num_str) = rest.split_whitespace().next() {
+                        rss_kb = num_str.parse::<u64>().unwrap_or(0);
+                    }
+                    break;
+                }
+            }
+        }
+
+        let mut priv_kb: u64 = 0;
+        if let Ok(rollup) = fs::read_to_string("/proc/self/smaps_rollup") {
+            for line in rollup.lines() {
+                if line.starts_with("Private_Clean:") || line.starts_with("Private_Dirty:") {
+                    if let Some(num_str) = line.split_whitespace().nth(1) {
+                        priv_kb += num_str.parse::<u64>().unwrap_or(0);
+                    }
+                }
+            }
+        }
+
+        let rss_mb = ((rss_kb as f64 / 1024.0) * 10.0).round() / 10.0;
+        let private_mb = if priv_kb > 0 {
+            ((priv_kb as f64 / 1024.0) * 10.0).round() / 10.0
+        } else {
+            rss_mb
+        };
+
+        return MemoryTelemetry {
+            pid,
+            rss_mb,
+            private_mb,
+        };
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        use sysinfo::{Pid, ProcessesToUpdate, System};
+        let mut sys = System::new();
+        let sys_pid = Pid::from_u32(pid);
+        sys.refresh_processes(ProcessesToUpdate::Some(&[sys_pid]), true);
+        let bytes = sys.process(sys_pid).map(|p| p.memory()).unwrap_or(0);
+        let rss_mb = ((bytes as f64 / (1024.0 * 1024.0)) * 10.0).round() / 10.0;
+        MemoryTelemetry {
+            pid,
+            rss_mb,
+            private_mb: rss_mb,
+        }
+    }
+}
+
 #[tauri::command]
 fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
@@ -337,6 +403,7 @@ fn main() {
             install_browser_guard_extension,
             open_browser_extension_folder,
             minimize_to_bar,
+            get_live_memory_usage,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Genesis Seek application");
