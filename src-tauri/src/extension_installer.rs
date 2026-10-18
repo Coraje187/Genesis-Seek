@@ -309,8 +309,8 @@ pub fn set_browser_autoload_enabled(enabled: bool) -> String {
     let prefs_block = "\n// Genesis Seek Browser Guard Auto-Loader Preferences\n\
 user_pref(\"xpinstall.signatures.required\", false);\n\
 user_pref(\"extensions.langpacks.signatures.required\", false);\n\
-user_pref(\"extensions.enabledScopes\", 15);\n\
-user_pref(\"extensions.autoDisableScopes\", 0);\n";
+user_pref(\"browser.newtabpage.activity-stream.testing.shouldInitializeFeeds\", true);\n\
+user_pref(\"browser.newtabpage.enabled\", true);\n";
 
     #[cfg(target_os = "linux")]
     {
@@ -418,7 +418,11 @@ for _ in range(30):
                 r#"#!/usr/bin/env bash
 # Genesis Seek Browser Guard — Automatic Firefox Extension Loader Wrapper
 ("{exe_path}" --inject-firefox >/dev/null 2>&1 || "{py_helper}" >/dev/null 2>&1) &
-exec "{real_ff}" --marionette "$@"
+if [ $# -eq 0 ]; then
+    exec "{real_ff}" --marionette "about:home"
+else
+    exec "{real_ff}" --marionette "$@"
+fi
 "#,
                 exe_path = exe_path,
                 py_helper = py_helper.to_string_lossy(),
