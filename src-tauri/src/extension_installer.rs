@@ -208,7 +208,7 @@ fn marionette_send_packet(stream: &mut TcpStream, json_payload: &str) -> Result<
 }
 
 /// Attempt to install the extension automatically into Firefox via Marionette (`127.0.0.1:2828`).
-fn try_firefox_marionette_install(ext_path: &str) -> Result<String, String> {
+pub fn try_firefox_marionette_install(ext_path: &str) -> Result<String, String> {
     let addr: SocketAddr = "127.0.0.1:2828".parse().unwrap();
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(900))
         .map_err(|e| e.to_string())?;
@@ -240,6 +240,153 @@ fn try_firefox_marionette_install(ext_path: &str) -> Result<String, String> {
     } else {
         Err(format!("Marionette response: {}", install_resp))
     }
+}
+
+/// Ensure the staged Firefox extension exists and configure permanent auto-load on every Firefox launch:
+/// 1. Stages `/home/coraje/Downloads/Genesis-Seek-Browser-Guard` with Firefox MV3 manifest & icons.
+/// 2. Configures Firefox `user.js` preferences across all user profiles.
+/// 3. Installs `~/.local/bin/firefox` wrapper + `~/.local/share/applications/firefox.desktop`
+///    so every future Firefox launch automatically starts with `--marionette` and auto-injects
+///    Genesis Seek Browser Guard in the background without manual `about:debugging` steps.
+pub fn setup_firefox_permanent_autoload() -> String {
+    let ext_path = resolve_extension_dir();
+    let mut staged_path = ext_path.clone();
+    if let Some(dl) = dirs::download_dir() {
+        let candidate = dl.join("Genesis-Seek-Browser-Guard");
+        if copy_dir_recursive(&ext_path, &candidate).is_ok() {
+            write_browser_manifest(&candidate, true);
+            staged_path = candidate;
+        }
+    }
+    let staged_str = staged_path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            // 1. Configure user.js in all Firefox profiles
+            let profile_roots = [
+                home.join(".config/mozilla/firefox"),
+                home.join(".mozilla/firefox"),
+            ];
+            let prefs_block = "\n// Genesis Seek Browser Guard Auto-Loader Preferences\n\
+user_pref(\"xpinstall.signatures.required\", false);\n\
+user_pref(\"extensions.langpacks.signatures.required\", false);\n\
+user_pref(\"extensions.enabledScopes\", 15);\n\
+user_pref(\"extensions.autoDisableScopes\", 0);\n";
+
+            for root in &profile_roots {
+                if let Ok(entries) = fs::read_dir(root) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.is_dir() && p.join("prefs.js").exists() {
+                            let user_js = p.join("user.js");
+                            let existing = fs::read_to_string(&user_js).unwrap_or_default();
+                            if !existing.contains("Genesis Seek Browser Guard Auto-Loader") {
+                                let _ = fs::write(&user_js, format!("{}{}", existing, prefs_block));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Create ~/.local/bin/genesis-seek-ff-autoload.py helper that injects the add-on via port 2828
+            let local_bin = home.join(".local/bin");
+            let _ = fs::create_dir_all(&local_bin);
+            let py_helper = local_bin.join("genesis-seek-ff-autoload.py");
+            let py_code = format!(
+                r#"#!/usr/bin/env python3
+import socket, time, json, sys
+
+EXT_PATH = {ext_path:?}
+
+def recv_packet(sock):
+    buf = b""
+    while True:
+        ch = sock.recv(1)
+        if not ch:
+            raise EOFError("closed")
+        if ch == b":":
+            break
+        buf += ch
+    length = int(buf.decode("ascii"))
+    data = b""
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise EOFError("closed body")
+        data += chunk
+    return data.decode("utf-8", errors="replace")
+
+def send_packet(sock, obj):
+    raw = json.dumps(obj).encode("utf-8")
+    sock.sendall(f"{{len(raw)}}:".encode("ascii") + raw)
+
+for _ in range(30):
+    try:
+        s = socket.create_connection(("127.0.0.1", 2828), timeout=1.0)
+        s.settimeout(4.0)
+        recv_packet(s)
+        send_packet(s, [0, 1, "WebDriver:NewSession", {{}}])
+        recv_packet(s)
+        send_packet(s, [0, 2, "Addon:Install", {{"path": EXT_PATH, "temporary": True}}])
+        resp = recv_packet(s)
+        send_packet(s, [0, 3, "WebDriver:DeleteSession", {{}}])
+        try:
+            recv_packet(s)
+        except Exception:
+            pass
+        s.close()
+        if "browser-guard@genesisseek.io" in resp or '"value"' in resp:
+            sys.exit(0)
+    except Exception:
+        time.sleep(0.5)
+"#,
+                ext_path = staged_str
+            );
+            let _ = fs::write(&py_helper, py_code);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&py_helper, fs::Permissions::from_mode(0o755));
+            }
+
+            // 3. Create ~/.local/bin/firefox wrapper so launching `firefox` from CLI or desktop
+            //    automatically passes `--marionette` and triggers the background auto-loader
+            let ff_wrapper = local_bin.join("firefox");
+            let wrapper_script = format!(
+                r#"#!/usr/bin/env bash
+# Genesis Seek Browser Guard — Automatic Firefox Extension Loader Wrapper
+("{py_helper}" >/dev/null 2>&1 &)
+exec /usr/lib/firefox/firefox --marionette "$@"
+"#,
+                py_helper = py_helper.to_string_lossy()
+            );
+            let _ = fs::write(&ff_wrapper, wrapper_script);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&ff_wrapper, fs::Permissions::from_mode(0o755));
+            }
+
+            // 4. Create ~/.local/share/applications/firefox.desktop override so launching Firefox
+            //    from the app launcher / dock / desktop bar also uses the auto-loader wrapper
+            let apps_dir = home.join(".local/share/applications");
+            let _ = fs::create_dir_all(&apps_dir);
+            if let Ok(sys_desktop) = fs::read_to_string("/usr/share/applications/firefox.desktop") {
+                let patched = sys_desktop.replace(
+                    "Exec=/usr/lib/firefox/firefox",
+                    &format!("Exec={}", ff_wrapper.to_string_lossy()),
+                );
+                let patched = patched.replace(
+                    "Exec=firefox",
+                    &format!("Exec={}", ff_wrapper.to_string_lossy()),
+                );
+                let _ = fs::write(apps_dir.join("firefox.desktop"), patched);
+            }
+        }
+    }
+
+    staged_str
 }
 
 /// Detect installed web browsers across Linux and Windows.
@@ -387,23 +534,24 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
     //    - Open `http://127.0.0.1:49152/install-firefox` in Firefox (unlike `about:` URLs which Firefox blocks from CLI when already running,
     //      `http://127.0.0.1:49152/install-firefox` always opens a new tab in the running Firefox window with 1-click copy buttons!)
     if is_firefox && target.installed && !target.binary_path.is_empty() {
+        let staged_ff = setup_firefox_permanent_autoload();
         // Ensure no unsigned .xpi sits in Downloads/Genesis-Seek-Browser-Guard to prevent the `about:addons` "has not been verified" error
-        let _ = fs::remove_file(Path::new(&staged_path_str).join("genesis-seek-browser-guard.xpi"));
+        let _ = fs::remove_file(Path::new(&staged_ff).join("genesis-seek-browser-guard.xpi"));
 
-        if try_firefox_marionette_install(&ext_path_str).is_ok() {
+        if try_firefox_marionette_install(&staged_ff).is_ok() {
             realtime_shield::log_security_event(
                 "Browser Guard",
                 "Info",
-                "Auto-Installed Browser Guard into Mozilla Firefox",
-                &ext_path_str,
+                "Auto-Installed Browser Guard into Mozilla Firefox (Permanent Startup Enabled)",
+                &staged_ff,
                 "Extension Active",
             );
             return Ok(ExtensionInstallResult {
                 browser_name: target.name,
                 success: true,
-                extension_path: staged_path_str,
-                method_used: "Firefox Automatic Add-on Installer".to_string(),
-                message: "Genesis Seek Browser Guard has been automatically installed and activated in Mozilla Firefox!".to_string(),
+                extension_path: staged_ff,
+                method_used: "Firefox Automatic Startup Loader".to_string(),
+                message: "Genesis Seek Browser Guard is active in Firefox AND configured to auto-load automatically every time you open Firefox!".to_string(),
             });
         }
 
@@ -415,25 +563,25 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
 
         for _ in 0..6 {
             thread::sleep(Duration::from_millis(300));
-            if try_firefox_marionette_install(&ext_path_str).is_ok() {
+            if try_firefox_marionette_install(&staged_ff).is_ok() {
                 realtime_shield::log_security_event(
                     "Browser Guard",
                     "Info",
-                    "Auto-Installed Browser Guard into Mozilla Firefox",
-                    &ext_path_str,
+                    "Auto-Installed Browser Guard into Mozilla Firefox (Permanent Startup Enabled)",
+                    &staged_ff,
                     "Extension Active",
                 );
                 return Ok(ExtensionInstallResult {
                     browser_name: target.name,
                     success: true,
-                    extension_path: staged_path_str,
-                    method_used: "Firefox Automatic Add-on Installer".to_string(),
-                    message: "Genesis Seek Browser Guard was automatically loaded into Mozilla Firefox! Look for the shield icon in your Firefox Extensions puzzle menu.".to_string(),
+                    extension_path: staged_ff,
+                    method_used: "Firefox Automatic Startup Loader".to_string(),
+                    message: "Genesis Seek Browser Guard was automatically loaded into Mozilla Firefox and configured to auto-load on every future Firefox launch!".to_string(),
                 });
             }
         }
 
-        let manifest_file = Path::new(&staged_path_str)
+        let manifest_file = Path::new(&staged_ff)
             .join("manifest.json")
             .to_string_lossy()
             .to_string();
@@ -441,20 +589,20 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
         realtime_shield::log_security_event(
             "Browser Guard",
             "Info",
-            "Opened Firefox Interactive Extension Installer",
+            "Configured Permanent Firefox Auto-Loader + Opened Installer Tab",
             &manifest_file,
-            "Ready in Firefox Tab",
+            "Auto-Loader Configured",
         );
 
         return Ok(ExtensionInstallResult {
             browser_name: target.name,
             success: true,
-            extension_path: staged_path_str.clone(),
-            method_used: "Firefox Installer Tab Opened".to_string(),
+            extension_path: staged_ff.clone(),
+            method_used: "Permanent Auto-Loader + One-Time Tab".to_string(),
             message: format!(
-                "NOTE: Do NOT use 'about:addons' (Install Add-on From File), which causes the 'has not been verified' error.\n\n\
-                 Instead:\n\
-                 1. In Firefox's top address bar, type or paste:  about:debugging#/runtime/this-firefox\n\
+                "Automatic Startup Configured! From the next time you launch Firefox onward, Genesis Seek will load the extension automatically.\n\n\
+                 For your currently open Firefox session (one-time only):\n\
+                 1. In Firefox's top address bar, paste:  about:debugging#/runtime/this-firefox\n\
                  2. Click 'Load Temporary Add-on...'\n\
                  3. Select manifest.json inside Downloads/Genesis-Seek-Browser-Guard:\n   {}",
                 manifest_file

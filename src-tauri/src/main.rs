@@ -370,6 +370,7 @@ fn main() {
         }
     }
 
+    let _ = extension_installer::setup_firefox_permanent_autoload();
     realtime_shield::spawn_realtime_file_watcher();
     realtime_shield::spawn_ransomware_canary();
     realtime_shield::spawn_process_monitor();

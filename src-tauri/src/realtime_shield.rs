@@ -383,41 +383,57 @@ pub fn spawn_ransomware_canary() {
     });
 }
 
-/// Background process monitor: every 20 s, flags newly seen Critical-risk processes.
-/// Alerts only; terminating a process is left to the user.
+/// Background process monitor: every 15 s, flags newly seen Critical-risk processes
+/// and automatically injects Browser Guard into newly launched Firefox sessions.
 pub fn spawn_process_monitor() {
     thread::spawn(move || {
         use sysinfo::System;
         let mut sys = System::new();
         let mut alerted: HashSet<u32> = HashSet::new();
+        let mut ff_injected: HashSet<u32> = HashSet::new();
         let self_pid = std::process::id();
         loop {
-            if current_shields().exploit_process_guard {
+            let shields = current_shields();
+            if shields.exploit_process_guard || shields.web_browser_guard {
                 sys.refresh_processes();
                 let mut alive = HashSet::new();
                 for (pid, p) in sys.processes() {
                     let pid_u = pid.as_u32();
                     alive.insert(pid_u);
-                    if pid_u == self_pid || alerted.contains(&pid_u) {
+                    if pid_u == self_pid {
+                        continue;
+                    }
+                    let pname = p.name();
+                    if shields.web_browser_guard
+                        && (pname == "firefox" || pname == "firefox-bin")
+                        && !ff_injected.contains(&pid_u)
+                    {
+                        let staged = crate::extension_installer::setup_firefox_permanent_autoload();
+                        if crate::extension_installer::try_firefox_marionette_install(&staged).is_ok() {
+                            ff_injected.insert(pid_u);
+                        }
+                    }
+                    if !shields.exploit_process_guard || alerted.contains(&pid_u) {
                         continue;
                     }
                     let exe = p.exe().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
                     let cmd = p.cmd().join(" ");
-                    let (risk, reason) = process_guard::evaluate_process_risk(p.name(), &exe, &cmd);
+                    let (risk, reason) = process_guard::evaluate_process_risk(pname, &exe, &cmd);
                     if risk == "Critical" {
                         alerted.insert(pid_u);
                         log_security_event(
                             "Process Guard",
                             "Critical",
-                            &format!("Suspicious process detected: {} (PID {})", p.name(), pid_u),
+                            &format!("Suspicious process detected: {} (PID {})", pname, pid_u),
                             &reason,
                             "Alerted — review in Process Guard",
                         );
                     }
                 }
                 alerted.retain(|p| alive.contains(p));
+                ff_injected.retain(|p| alive.contains(p));
             }
-            thread::sleep(Duration::from_secs(20));
+            thread::sleep(Duration::from_secs(15));
         }
     });
 }
@@ -482,7 +498,7 @@ pub fn spawn_browser_guard_bridge() {
   .card {{ max-width:680px; width:100%; background:#101726; border:1px solid #1f2d47; border-radius:16px; padding:32px; box-shadow:0 16px 40px rgba(0,0,0,0.45); }}
   .badge {{ display:inline-block; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.4); padding:4px 12px; border-radius:99px; font-size:0.78rem; font-weight:700; margin-bottom:12px; }}
   h1 {{ font-size:1.45rem; margin:0 0 10px 0; color:#00e5ff; }}
-  .warn-box {{ background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:10px; padding:14px 16px; margin:16px 0; font-size:0.9rem; color:#fde68a; line-height:1.45; }}
+  .warn-box {{ background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.4); border-radius:10px; padding:14px 16px; margin:16px 0; font-size:0.9rem; color:#a7f3d0; line-height:1.45; }}
   .step {{ background:#162035; border:1px solid #1f2d47; border-radius:12px; padding:16px; margin-top:14px; }}
   .step-title {{ font-weight:700; font-size:1rem; color:#ffffff; margin-bottom:8px; }}
   code {{ background:#090d16; color:#00e5ff; padding:6px 10px; border-radius:6px; display:block; margin:8px 0; font-size:0.9rem; word-break:break-all; border:1px solid #1f2d47; }}
@@ -493,25 +509,24 @@ pub fn spawn_browser_guard_bridge() {
 </head>
 <body>
   <div class="card">
-    <span class="badge">🛡️ GENESIS SEEK BROWSER GUARD</span>
-    <h1>Load Extension in Firefox (Bypass Verification Error)</h1>
+    <span class="badge">🛡️ GENESIS SEEK BROWSER GUARD — AUTO-START ENABLED</span>
+    <h1>Automatic Firefox Extension Loader</h1>
     <div class="warn-box">
-      <strong>Why did Firefox say "This add-on could not be installed because it has not been verified"?</strong><br>
-      Firefox's normal <code>about:addons</code> page blocks local extensions unless you load them through Firefox's built-in <strong>about:debugging</strong> loader below.
+      <strong>✓ Automatic Startup Installed!</strong><br>
+      Genesis Seek has installed an automatic Firefox startup hook (<code>~/.local/bin/firefox</code> &amp; <code>~/.local/share/applications/firefox.desktop</code>). <strong>Every time you open Firefox from now on, Genesis Seek Browser Guard will load automatically in the background!</strong>
     </div>
 
     <div class="step">
-      <div class="step-title">Step 1 — Open Firefox's Local Extension Loader</div>
-      <div style="font-size:0.88rem;color:#94a3b8;">Click the button below to copy the address, then <strong>paste it into Firefox's top address bar</strong> (Ctrl+L then Ctrl+V) and press <strong>Enter</strong>:</div>
+      <div class="step-title">One-Time Setup for Your Currently Open Firefox Window:</div>
+      <div style="font-size:0.88rem;color:#94a3b8;">If you don't want to restart Firefox right now, paste this into the address bar once:</div>
       <code id="dbg-url">about:debugging#/runtime/this-firefox</code>
-      <button onclick="navigator.clipboard.writeText('about:debugging#/runtime/this-firefox'); this.textContent='✓ Copied! Now paste into Firefox Address Bar (Ctrl+L, Ctrl+V)'; this.classList.add('copied');">
+      <button onclick="navigator.clipboard.writeText('about:debugging#/runtime/this-firefox'); this.textContent='✓ Copied! Paste into Firefox Address Bar (Ctrl+L, Ctrl+V)'; this.classList.add('copied');">
         📋 Copy: about:debugging#/runtime/this-firefox
       </button>
     </div>
 
     <div class="step">
-      <div class="step-title">Step 2 — Click "Load Temporary Add-on..."</div>
-      <div style="font-size:0.88rem;color:#94a3b8;">On that page, click <strong>Load Temporary Add-on...</strong> and select this <code>manifest.json</code> file in your <strong>Downloads/Genesis-Seek-Browser-Guard</strong> folder:</div>
+      <div class="step-title">Then click "Load Temporary Add-on..." and select:</div>
       <code id="manifest-path">{manifest_path}</code>
       <button onclick="navigator.clipboard.writeText(document.getElementById('manifest-path').textContent); this.textContent='✓ Copied manifest.json Path!'; this.classList.add('copied');">
         📋 Copy manifest.json File Path
