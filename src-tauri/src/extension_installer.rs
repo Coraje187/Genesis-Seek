@@ -383,10 +383,13 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
     }
 
     // 2. Mozilla Firefox:
-    //    - Try instant Marionette auto-install if port 2828 is open (or launch Firefox with --marionette if not running)
-    //    - Also open `about:debugging#/runtime/this-firefox` so if Firefox was already open without --marionette,
-    //      clicking "Load Temporary Add-on..." and selecting `manifest.json` in `Downloads/Genesis-Seek-Browser-Guard` works immediately!
+    //    - Try instant Marionette auto-install if port 2828 is open
+    //    - Open `http://127.0.0.1:49152/install-firefox` in Firefox (unlike `about:` URLs which Firefox blocks from CLI when already running,
+    //      `http://127.0.0.1:49152/install-firefox` always opens a new tab in the running Firefox window with 1-click copy buttons!)
     if is_firefox && target.installed && !target.binary_path.is_empty() {
+        // Ensure no unsigned .xpi sits in Downloads/Genesis-Seek-Browser-Guard to prevent the `about:addons` "has not been verified" error
+        let _ = fs::remove_file(Path::new(&staged_path_str).join("genesis-seek-browser-guard.xpi"));
+
         if try_firefox_marionette_install(&ext_path_str).is_ok() {
             realtime_shield::log_security_event(
                 "Browser Guard",
@@ -404,15 +407,14 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
             });
         }
 
-        // Launch Firefox with `--marionette` and `about:debugging#/runtime/this-firefox`
+        // Open the local interactive installer tab in Firefox (`http://127.0.0.1:49152/install-firefox`)
         let _ = Command::new(&target.binary_path)
             .arg("--marionette")
-            .arg("about:debugging#/runtime/this-firefox")
+            .arg("http://127.0.0.1:49152/install-firefox")
             .spawn();
 
-        // Wait up to 3.5s to see if Firefox started a new instance with Marionette enabled
-        for _ in 0..10 {
-            thread::sleep(Duration::from_millis(350));
+        for _ in 0..6 {
+            thread::sleep(Duration::from_millis(300));
             if try_firefox_marionette_install(&ext_path_str).is_ok() {
                 realtime_shield::log_security_event(
                     "Browser Guard",
@@ -439,20 +441,22 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
         realtime_shield::log_security_event(
             "Browser Guard",
             "Info",
-            "Opened Firefox Add-on Loader (about:debugging)",
+            "Opened Firefox Interactive Extension Installer",
             &manifest_file,
-            "Ready to Select manifest.json",
+            "Ready in Firefox Tab",
         );
 
         return Ok(ExtensionInstallResult {
             browser_name: target.name,
             success: true,
             extension_path: staged_path_str.clone(),
-            method_used: "Firefox Add-on Loader Opened (about:debugging)".to_string(),
+            method_used: "Firefox Installer Tab Opened".to_string(),
             message: format!(
-                "Firefox has opened the Add-on Loader tab (about:debugging#/runtime/this-firefox)!\n\n\
-                 1. Click 'Load Temporary Add-on...' in the Firefox tab that just opened.\n\
-                 2. Open Downloads -> Genesis-Seek-Browser-Guard and select:\n   {}",
+                "NOTE: Do NOT use 'about:addons' (Install Add-on From File), which causes the 'has not been verified' error.\n\n\
+                 Instead:\n\
+                 1. In Firefox's top address bar, type or paste:  about:debugging#/runtime/this-firefox\n\
+                 2. Click 'Load Temporary Add-on...'\n\
+                 3. Select manifest.json inside Downloads/Genesis-Seek-Browser-Guard:\n   {}",
                 manifest_file
             ),
         });

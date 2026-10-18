@@ -464,7 +464,69 @@ pub fn spawn_browser_guard_bridge() {
             }
 
             let target = first_line.split_whitespace().nth(1).unwrap_or("/");
-            let response = if let Some(encoded) = target.strip_prefix("/check?url=") {
+            let response = if target.starts_with("/install-firefox") {
+                let manifest_path = dirs::download_dir()
+                    .unwrap_or_else(|| PathBuf::from("/home/coraje/Downloads"))
+                    .join("Genesis-Seek-Browser-Guard")
+                    .join("manifest.json")
+                    .to_string_lossy()
+                    .to_string();
+                let html = format!(
+                    r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Genesis Seek — Firefox Extension Installer</title>
+<style>
+  body {{ background:#090d16; color:#f1f5f9; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0; padding:24px; }}
+  .card {{ max-width:680px; width:100%; background:#101726; border:1px solid #1f2d47; border-radius:16px; padding:32px; box-shadow:0 16px 40px rgba(0,0,0,0.45); }}
+  .badge {{ display:inline-block; background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.4); padding:4px 12px; border-radius:99px; font-size:0.78rem; font-weight:700; margin-bottom:12px; }}
+  h1 {{ font-size:1.45rem; margin:0 0 10px 0; color:#00e5ff; }}
+  .warn-box {{ background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:10px; padding:14px 16px; margin:16px 0; font-size:0.9rem; color:#fde68a; line-height:1.45; }}
+  .step {{ background:#162035; border:1px solid #1f2d47; border-radius:12px; padding:16px; margin-top:14px; }}
+  .step-title {{ font-weight:700; font-size:1rem; color:#ffffff; margin-bottom:8px; }}
+  code {{ background:#090d16; color:#00e5ff; padding:6px 10px; border-radius:6px; display:block; margin:8px 0; font-size:0.9rem; word-break:break-all; border:1px solid #1f2d47; }}
+  button {{ background:linear-gradient(135deg,#00c6ff,#0072ff); color:#fff; border:none; padding:10px 18px; border-radius:8px; font-weight:700; cursor:pointer; font-size:0.88rem; margin-top:6px; }}
+  button:hover {{ filter:brightness(1.1); }}
+  .copied {{ background:#10b981 !important; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <span class="badge">🛡️ GENESIS SEEK BROWSER GUARD</span>
+    <h1>Load Extension in Firefox (Bypass Verification Error)</h1>
+    <div class="warn-box">
+      <strong>Why did Firefox say "This add-on could not be installed because it has not been verified"?</strong><br>
+      Firefox's normal <code>about:addons</code> page blocks local extensions unless you load them through Firefox's built-in <strong>about:debugging</strong> loader below.
+    </div>
+
+    <div class="step">
+      <div class="step-title">Step 1 — Open Firefox's Local Extension Loader</div>
+      <div style="font-size:0.88rem;color:#94a3b8;">Click the button below to copy the address, then <strong>paste it into Firefox's top address bar</strong> (Ctrl+L then Ctrl+V) and press <strong>Enter</strong>:</div>
+      <code id="dbg-url">about:debugging#/runtime/this-firefox</code>
+      <button onclick="navigator.clipboard.writeText('about:debugging#/runtime/this-firefox'); this.textContent='✓ Copied! Now paste into Firefox Address Bar (Ctrl+L, Ctrl+V)'; this.classList.add('copied');">
+        📋 Copy: about:debugging#/runtime/this-firefox
+      </button>
+    </div>
+
+    <div class="step">
+      <div class="step-title">Step 2 — Click "Load Temporary Add-on..."</div>
+      <div style="font-size:0.88rem;color:#94a3b8;">On that page, click <strong>Load Temporary Add-on...</strong> and select this <code>manifest.json</code> file in your <strong>Downloads/Genesis-Seek-Browser-Guard</strong> folder:</div>
+      <code id="manifest-path">{manifest_path}</code>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('manifest-path').textContent); this.textContent='✓ Copied manifest.json Path!'; this.classList.add('copied');">
+        📋 Copy manifest.json File Path
+      </button>
+    </div>
+  </div>
+</body>
+</html>"#
+                );
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    html.len(),
+                    html
+                )
+            } else if let Some(encoded) = target.strip_prefix("/check?url=") {
                 let url = percent_decode(encoded.split('&').next().unwrap_or(""));
                 let result = if current_shields().web_browser_guard {
                     evaluate_url_safety(&url)
