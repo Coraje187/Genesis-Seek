@@ -445,13 +445,26 @@ function formatTime(iso) {
 }
 
 // Shield Integrity Calculation (Each of the 4 layers = 25% of total 100% protection)
+function syncExtAutoloadBadge(enabled) {
+  const badge = document.getElementById("status-ext-autoload");
+  if (badge) {
+    badge.textContent = enabled ? "AUTO-LOAD ON" : "MANUAL ONLY";
+    badge.className = "sev-badge " + (enabled ? "sev-Safe" : "sev-Medium");
+  }
+}
+
 async function syncShieldToggles() {
+  const autoLoadEl = document.getElementById("toggle-ext-autoload");
+  const autoLoadEnabled = autoLoadEl ? Boolean(autoLoadEl.checked) : true;
+  syncExtAutoloadBadge(autoLoadEnabled);
+
   const newState = {
     real_time_file_guard: Boolean(document.getElementById("toggle-file-guard")?.checked),
     web_browser_guard: Boolean(document.getElementById("toggle-web-guard")?.checked),
     ransomware_canary_guard: Boolean(document.getElementById("toggle-ransomware-guard")?.checked),
     exploit_process_guard: Boolean(document.getElementById("toggle-process-guard")?.checked),
     auto_quarantine_realtime: true,
+    browser_extension_autoload: autoLoadEnabled,
   };
   if (typeof window.recalculateProtectionNow === "function") {
     window.recalculateProtectionNow(true);
@@ -467,10 +480,15 @@ function updateProtectionRing(state) {
     const wg = document.getElementById("toggle-web-guard");
     const rg = document.getElementById("toggle-ransomware-guard");
     const pg = document.getElementById("toggle-process-guard");
+    const al = document.getElementById("toggle-ext-autoload");
     if (fg) fg.checked = Boolean(state.real_time_file_guard);
     if (wg) wg.checked = Boolean(state.web_browser_guard);
     if (rg) rg.checked = Boolean(state.ransomware_canary_guard);
     if (pg) pg.checked = Boolean(state.exploit_process_guard);
+    if (al && typeof state.browser_extension_autoload === "boolean") {
+      al.checked = state.browser_extension_autoload;
+      syncExtAutoloadBadge(state.browser_extension_autoload);
+    }
   }
   if (typeof window.recalculateProtectionNow === "function") {
     window.recalculateProtectionNow(true);

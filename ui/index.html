@@ -466,6 +466,22 @@
             </div>
           </div>
 
+          <div class="shield-row" style="margin-bottom:14px;" onclick="var c=document.getElementById('toggle-ext-autoload'); if(event.target!==c){c.checked=!c.checked; window.syncShieldToggles && window.syncShieldToggles();}">
+            <div>
+              <div class="shield-name">
+                Auto-Load Browser Guard on Browser Startup (Windows &amp; Linux)
+                <span id="status-ext-autoload" class="sev-badge sev-Safe" style="margin-left:6px;">AUTO-LOAD ON</span>
+              </div>
+              <div class="shield-desc">
+                Automatically injects Genesis Seek Browser Guard whenever Firefox opens (via local startup wrapper &amp; background daemon) without repeating manual <code>about:debugging</code> steps
+              </div>
+            </div>
+            <label class="switch" onclick="event.stopPropagation();">
+              <input type="checkbox" id="toggle-ext-autoload" checked onchange="window.syncShieldToggles && window.syncShieldToggles();" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
           <div class="scan-modes-grid" id="browser-installer-grid" style="margin-top:10px;">
             <!-- Populated dynamically by app.js -->
           </div>

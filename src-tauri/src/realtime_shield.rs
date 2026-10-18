@@ -26,6 +26,7 @@ pub struct ShieldState {
     pub ransomware_canary_guard: bool,
     pub exploit_process_guard: bool,
     pub auto_quarantine_realtime: bool,
+    pub browser_extension_autoload: bool,
 }
 
 impl Default for ShieldState {
@@ -36,6 +37,7 @@ impl Default for ShieldState {
             ransomware_canary_guard: true,
             exploit_process_guard: true,
             auto_quarantine_realtime: true,
+            browser_extension_autoload: true,
         }
     }
 }
@@ -404,8 +406,10 @@ pub fn spawn_process_monitor() {
                         continue;
                     }
                     let pname = p.name();
+                    let pname_lower = pname.to_lowercase();
                     if shields.web_browser_guard
-                        && (pname == "firefox" || pname == "firefox-bin")
+                        && shields.browser_extension_autoload
+                        && (pname_lower == "firefox" || pname_lower == "firefox-bin" || pname_lower == "firefox.exe")
                         && !ff_injected.contains(&pid_u)
                     {
                         let staged = crate::extension_installer::setup_firefox_permanent_autoload();
@@ -482,7 +486,8 @@ pub fn spawn_browser_guard_bridge() {
             let target = first_line.split_whitespace().nth(1).unwrap_or("/");
             let response = if target.starts_with("/install-firefox") {
                 let manifest_path = dirs::download_dir()
-                    .unwrap_or_else(|| PathBuf::from("/home/coraje/Downloads"))
+                    .or_else(dirs::home_dir)
+                    .unwrap_or_else(std::env::temp_dir)
                     .join("Genesis-Seek-Browser-Guard")
                     .join("manifest.json")
                     .to_string_lossy()

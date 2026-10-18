@@ -66,6 +66,7 @@ fn get_shield_state() -> ShieldState {
 #[tauri::command]
 fn update_shield_state(new_state: ShieldState) -> ShieldState {
     realtime_shield::save_shield_state(&new_state);
+    let _ = extension_installer::set_browser_autoload_enabled(new_state.browser_extension_autoload);
     tray_indicator::notify_tray_updated();
 
     let enabled_count = [
@@ -360,6 +361,11 @@ fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--inject-firefox") {
+        extension_installer::inject_firefox_cli_loop();
+        return;
+    }
+
     #[cfg(target_os = "linux")]
     {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {

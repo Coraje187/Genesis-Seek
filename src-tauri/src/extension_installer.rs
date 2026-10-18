@@ -26,14 +26,34 @@ pub struct ExtensionInstallResult {
     pub message: String,
 }
 
-/// Locate the `browser-extension/` directory relative to the installed app data dir or project.
+const EMBEDDED_BG_JS: &str = include_str!("../../browser-extension/background.js");
+const EMBEDDED_CONTENT_JS: &str = include_str!("../../browser-extension/content_guard.js");
+const EMBEDDED_POPUP_HTML: &str = include_str!("../../browser-extension/popup.html");
+const EMBEDDED_POPUP_JS: &str = include_str!("../../browser-extension/popup.js");
+const EMBEDDED_RULES_JSON: &str = include_str!("../../browser-extension/rules.json");
+const EMBEDDED_ICON_16: &[u8] = include_bytes!("../../browser-extension/icons/icon-16.png");
+const EMBEDDED_ICON_32: &[u8] = include_bytes!("../../browser-extension/icons/icon-32.png");
+const EMBEDDED_ICON_48: &[u8] = include_bytes!("../../browser-extension/icons/icon-48.png");
+const EMBEDDED_ICON_128: &[u8] = include_bytes!("../../browser-extension/icons/icon-128.png");
+
+/// Ensure all embedded extension files and icons are materialized in `target_dir`.
+fn materialize_embedded_extension(target_dir: &Path, is_firefox: bool) {
+    let icons_dir = target_dir.join("icons");
+    let _ = fs::create_dir_all(&icons_dir);
+    let _ = fs::write(target_dir.join("background.js"), EMBEDDED_BG_JS);
+    let _ = fs::write(target_dir.join("content_guard.js"), EMBEDDED_CONTENT_JS);
+    let _ = fs::write(target_dir.join("popup.html"), EMBEDDED_POPUP_HTML);
+    let _ = fs::write(target_dir.join("popup.js"), EMBEDDED_POPUP_JS);
+    let _ = fs::write(target_dir.join("rules.json"), EMBEDDED_RULES_JSON);
+    let _ = fs::write(icons_dir.join("icon-16.png"), EMBEDDED_ICON_16);
+    let _ = fs::write(icons_dir.join("icon-32.png"), EMBEDDED_ICON_32);
+    let _ = fs::write(icons_dir.join("icon-48.png"), EMBEDDED_ICON_48);
+    let _ = fs::write(icons_dir.join("icon-128.png"), EMBEDDED_ICON_128);
+    write_browser_manifest(target_dir, is_firefox);
+}
+
+/// Locate or materialize the `browser-extension/` directory on any Windows or Linux PC.
 pub fn resolve_extension_dir() -> PathBuf {
-    if let Some(data_dir) = dirs::data_local_dir() {
-        let installed_ext = data_dir.join("genesis-seek").join("browser-extension");
-        if installed_ext.exists() {
-            return installed_ext;
-        }
-    }
     if let Ok(cwd) = std::env::current_dir() {
         let candidate1 = cwd.join("browser-extension");
         if candidate1.exists() {
@@ -46,7 +66,15 @@ pub fn resolve_extension_dir() -> PathBuf {
             }
         }
     }
-    PathBuf::from("/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension")
+    let fallback = dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("genesis-seek")
+        .join("browser-extension");
+    if !fallback.join("background.js").exists() {
+        materialize_embedded_extension(&fallback, true);
+    }
+    fallback
 }
 
 /// Recursively copy a directory (including `icons/` subdirectory) so staged unpacked extensions
@@ -242,38 +270,68 @@ pub fn try_firefox_marionette_install(ext_path: &str) -> Result<String, String> 
     }
 }
 
-/// Ensure the staged Firefox extension exists and configure permanent auto-load on every Firefox launch:
-/// 1. Stages `/home/coraje/Downloads/Genesis-Seek-Browser-Guard` with Firefox MV3 manifest & icons.
-/// 2. Configures Firefox `user.js` preferences across all user profiles.
-/// 3. Installs `~/.local/bin/firefox` wrapper + `~/.local/share/applications/firefox.desktop`
-///    so every future Firefox launch automatically starts with `--marionette` and auto-injects
-///    Genesis Seek Browser Guard in the background without manual `about:debugging` steps.
-pub fn setup_firefox_permanent_autoload() -> String {
-    let ext_path = resolve_extension_dir();
-    let mut staged_path = ext_path.clone();
-    if let Some(dl) = dirs::download_dir() {
-        let candidate = dl.join("Genesis-Seek-Browser-Guard");
-        if copy_dir_recursive(&ext_path, &candidate).is_ok() {
-            write_browser_manifest(&candidate, true);
-            staged_path = candidate;
+/// Pure-Rust CLI helper (`genesis-seek --inject-firefox`) that waits up to 15 seconds for
+/// Firefox's local port 2828 and injects the staged extension without requiring Python on Windows or Linux.
+pub fn inject_firefox_cli_loop() {
+    let staged = staged_firefox_extension_path();
+    for _ in 0..30 {
+        if try_firefox_marionette_install(&staged).is_ok() {
+            return;
         }
+        thread::sleep(Duration::from_millis(500));
     }
-    let staged_str = staged_path.to_string_lossy().to_string();
+}
 
-    #[cfg(target_os = "linux")]
-    {
-        if let Some(home) = dirs::home_dir() {
-            // 1. Configure user.js in all Firefox profiles
-            let profile_roots = [
-                home.join(".config/mozilla/firefox"),
-                home.join(".mozilla/firefox"),
-            ];
-            let prefs_block = "\n// Genesis Seek Browser Guard Auto-Loader Preferences\n\
+/// Stage the Firefox extension into `<Downloads>/Genesis-Seek-Browser-Guard` on any OS.
+pub fn staged_firefox_extension_path() -> String {
+    let ext_path = resolve_extension_dir();
+    let staged_dir = dirs::download_dir()
+        .or_else(dirs::data_local_dir)
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("Genesis-Seek-Browser-Guard");
+    materialize_embedded_extension(&staged_dir, true);
+    if ext_path.exists() && ext_path != staged_dir {
+        let _ = copy_dir_recursive(&ext_path, &staged_dir);
+        write_browser_manifest(&staged_dir, true);
+    }
+    staged_dir.to_string_lossy().to_string()
+}
+
+/// Enable or disable automatic browser startup loading across both Linux and Windows.
+pub fn set_browser_autoload_enabled(enabled: bool) -> String {
+    let staged_str = staged_firefox_extension_path();
+    let exe_path = std::env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("genesis-seek"))
+        .to_string_lossy()
+        .to_string();
+
+    let prefs_block = "\n// Genesis Seek Browser Guard Auto-Loader Preferences\n\
 user_pref(\"xpinstall.signatures.required\", false);\n\
 user_pref(\"extensions.langpacks.signatures.required\", false);\n\
 user_pref(\"extensions.enabledScopes\", 15);\n\
 user_pref(\"extensions.autoDisableScopes\", 0);\n";
 
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            let local_bin = home.join(".local/bin");
+            let py_helper = local_bin.join("genesis-seek-ff-autoload.py");
+            let ff_wrapper = local_bin.join("firefox");
+            let desktop_override = home.join(".local/share/applications/firefox.desktop");
+
+            if !enabled {
+                let _ = fs::remove_file(&py_helper);
+                let _ = fs::remove_file(&ff_wrapper);
+                let _ = fs::remove_file(&desktop_override);
+                return staged_str;
+            }
+
+            // 1. Configure user.js in all Linux Firefox profiles
+            let profile_roots = [
+                home.join(".config/mozilla/firefox"),
+                home.join(".mozilla/firefox"),
+            ];
             for root in &profile_roots {
                 if let Ok(entries) = fs::read_dir(root) {
                     for entry in entries.flatten() {
@@ -289,10 +347,8 @@ user_pref(\"extensions.autoDisableScopes\", 0);\n";
                 }
             }
 
-            // 2. Create ~/.local/bin/genesis-seek-ff-autoload.py helper that injects the add-on via port 2828
-            let local_bin = home.join(".local/bin");
+            // 2. Create ~/.local/bin/genesis-seek-ff-autoload.py fallback helper
             let _ = fs::create_dir_all(&local_bin);
-            let py_helper = local_bin.join("genesis-seek-ff-autoload.py");
             let py_code = format!(
                 r#"#!/usr/bin/env python3
 import socket, time, json, sys
@@ -350,16 +406,23 @@ for _ in range(30):
                 let _ = fs::set_permissions(&py_helper, fs::Permissions::from_mode(0o755));
             }
 
-            // 3. Create ~/.local/bin/firefox wrapper so launching `firefox` from CLI or desktop
-            //    automatically passes `--marionette` and triggers the background auto-loader
-            let ff_wrapper = local_bin.join("firefox");
+            // 3. Create ~/.local/bin/firefox wrapper (uses pure-Rust `--inject-firefox` + python fallback)
+            let real_ff = if Path::new("/usr/lib/firefox/firefox").exists() {
+                "/usr/lib/firefox/firefox"
+            } else if Path::new("/usr/bin/firefox").exists() {
+                "/usr/bin/firefox"
+            } else {
+                "/snap/bin/firefox"
+            };
             let wrapper_script = format!(
                 r#"#!/usr/bin/env bash
 # Genesis Seek Browser Guard — Automatic Firefox Extension Loader Wrapper
-("{py_helper}" >/dev/null 2>&1 &)
-exec /usr/lib/firefox/firefox --marionette "$@"
+("{exe_path}" --inject-firefox >/dev/null 2>&1 || "{py_helper}" >/dev/null 2>&1) &
+exec "{real_ff}" --marionette "$@"
 "#,
-                py_helper = py_helper.to_string_lossy()
+                exe_path = exe_path,
+                py_helper = py_helper.to_string_lossy(),
+                real_ff = real_ff
             );
             let _ = fs::write(&ff_wrapper, wrapper_script);
             #[cfg(unix)]
@@ -368,25 +431,77 @@ exec /usr/lib/firefox/firefox --marionette "$@"
                 let _ = fs::set_permissions(&ff_wrapper, fs::Permissions::from_mode(0o755));
             }
 
-            // 4. Create ~/.local/share/applications/firefox.desktop override so launching Firefox
-            //    from the app launcher / dock / desktop bar also uses the auto-loader wrapper
+            // 4. Create ~/.local/share/applications/firefox.desktop override
             let apps_dir = home.join(".local/share/applications");
             let _ = fs::create_dir_all(&apps_dir);
             if let Ok(sys_desktop) = fs::read_to_string("/usr/share/applications/firefox.desktop") {
-                let patched = sys_desktop.replace(
-                    "Exec=/usr/lib/firefox/firefox",
-                    &format!("Exec={}", ff_wrapper.to_string_lossy()),
-                );
-                let patched = patched.replace(
-                    "Exec=firefox",
-                    &format!("Exec={}", ff_wrapper.to_string_lossy()),
-                );
-                let _ = fs::write(apps_dir.join("firefox.desktop"), patched);
+                let patched = sys_desktop
+                    .replace(
+                        "Exec=/usr/lib/firefox/firefox",
+                        &format!("Exec={}", ff_wrapper.to_string_lossy()),
+                    )
+                    .replace(
+                        "Exec=firefox",
+                        &format!("Exec={}", ff_wrapper.to_string_lossy()),
+                    );
+                let _ = fs::write(&desktop_override, patched);
             }
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        let local_app = dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("genesis-seek");
+        let _ = fs::create_dir_all(&local_app);
+        let cmd_wrapper = local_app.join("firefox-autoload.cmd");
+        let start_menu_cmd = dirs::config_dir()
+            .map(|d| d.join(r"Microsoft\Windows\Start Menu\Programs\Firefox (Genesis Seek Protected).cmd"));
+
+        if !enabled {
+            let _ = fs::remove_file(&cmd_wrapper);
+            if let Some(sm) = start_menu_cmd {
+                let _ = fs::remove_file(sm);
+            }
+            return staged_str;
+        }
+
+        // 1. Configure user.js in all Windows Firefox profiles (%APPDATA%\Mozilla\Firefox\Profiles\*)
+        if let Some(appdata) = dirs::config_dir() {
+            let profiles_dir = appdata.join("Mozilla").join("Firefox").join("Profiles");
+            if let Ok(entries) = fs::read_dir(profiles_dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() && p.join("prefs.js").exists() {
+                        let user_js = p.join("user.js");
+                        let existing = fs::read_to_string(&user_js).unwrap_or_default();
+                        if !existing.contains("Genesis Seek Browser Guard Auto-Loader") {
+                            let _ = fs::write(&user_js, format!("{}{}", existing, prefs_block));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Create Windows launcher script that invokes `genesis-seek.exe --inject-firefox` + `firefox.exe --marionette`
+        let batch_script = format!(
+            "@echo off\r\nstart \"\" /B \"{}\" --inject-firefox\r\nstart \"\" \"C:\\Program Files\\Mozilla Firefox\\firefox.exe\" --marionette %*\r\n",
+            exe_path
+        );
+        let _ = fs::write(&cmd_wrapper, &batch_script);
+        if let Some(sm) = start_menu_cmd {
+            let _ = fs::write(sm, &batch_script);
+        }
+    }
+
     staged_str
+}
+
+/// Ensure the staged Firefox extension exists and configure permanent auto-load if enabled in ShieldState.
+pub fn setup_firefox_permanent_autoload() -> String {
+    let enabled = realtime_shield::current_shields().browser_extension_autoload;
+    set_browser_autoload_enabled(enabled)
 }
 
 /// Detect installed web browsers across Linux and Windows.
