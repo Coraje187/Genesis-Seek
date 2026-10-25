@@ -11,3 +11,5 @@ Thumbs.db
 .vscode/
 node_modules/
 dist/
+
+release_stage/

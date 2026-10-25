@@ -9,6 +9,24 @@
 
 ---
 
+## 📥 Downloads & Quick Installation
+
+### 🪟 Windows (10 / 11)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek.exe)
+* **Portable Archive**: [**genesis-seek-v0.1.0-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek-v0.1.0-windows-x86_64.zip)
+
+### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
+* **One-Line Automatic Installer**:
+  ```bash
+  curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
+  ```
+* **Linux Archive**: [**genesis-seek-v0.1.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek-v0.1.0-linux-x86_64.tar.gz)
+
+### 🌐 Browser Guard (Mozilla Firefox)
+* **Official Signed Add-on**: [**Add to Firefox (Mozilla AMO)**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) *(1-Click Permanent Install)*
+
+---
+
 ## ✨ Core Protection Layers
 
 1. **Multi-Engine File & Directory Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
