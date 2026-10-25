@@ -403,6 +403,14 @@ fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+    #[cfg(unix)]
+    unsafe {
+        extern "C" {
+            fn signal(sig: std::ffi::c_int, handler: usize) -> usize;
+        }
+        signal(1, 1); // SIGHUP = 1, SIG_IGN = 1: Ignore terminal hangup so closing the terminal does not kill Genesis Seek
+    }
+
     if std::env::args().any(|a| a == "--inject-firefox") {
         extension_installer::inject_firefox_cli_loop();
         return;
