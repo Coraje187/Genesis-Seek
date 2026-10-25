@@ -173,7 +173,7 @@ fn quarantine_threat(
         &severity,
         &format!("Threat Isolated: {}", threat_name),
         &file_path,
-        "Obfuscated in Vault",
+        "ChaCha20-Poly1305 Encrypted (.gvault)",
     );
     Ok(item)
 }
@@ -265,6 +265,13 @@ fn get_feed_status() -> ThreatFeedStatus {
 #[tauri::command]
 async fn sync_threat_feeds() -> Result<ThreatFeedStatus, String> {
     tauri::async_runtime::spawn_blocking(threat_intel_and_net::sync_threat_intelligence_feeds)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn sync_threat_intelligence() -> Result<ThreatFeedStatus, String> {
+    tauri::async_runtime::spawn_blocking(threat_intel_and_net::sync_threat_intelligence)
         .await
         .map_err(|e| e.to_string())
 }
@@ -423,6 +430,7 @@ fn main() {
     realtime_shield::spawn_ransomware_canary();
     realtime_shield::spawn_process_monitor();
     realtime_shield::spawn_browser_guard_bridge();
+    threat_intel_and_net::spawn_threat_feed_scheduler();
 
     tauri::Builder::default()
         .setup(|app| {
@@ -447,6 +455,7 @@ fn main() {
             get_security_events,
             get_feed_status,
             sync_threat_feeds,
+            sync_threat_intelligence,
             get_network_connections,
             get_virustotal_status,
             save_virustotal_config,

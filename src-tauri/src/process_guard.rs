@@ -1,7 +1,26 @@
+use crate::quarantine;
+use crate::scanner;
+use crate::tray_indicator;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use sysinfo::{Pid, System};
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::{CloseHandle, HANDLE},
+    System::Threading::{
+        OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME,
+        PROCESS_TERMINATE,
+    },
+};
+
+#[cfg(target_os = "windows")]
+#[link(name = "ntdll")]
+extern "system" {
+    fn NtSuspendProcess(ProcessHandle: HANDLE) -> i32;
+    fn NtResumeProcess(ProcessHandle: HANDLE) -> i32;
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessRiskItem {
@@ -24,9 +43,120 @@ pub struct PersistenceEntry {
     pub status: String, // "Verified", "Suspicious"
 }
 
+/// Check if an executable path on Windows resides in a high-risk user/temp drop zone
+/// (`Downloads`, `AppData\Local\Temp`, `AppData\Roaming`, `Users\Public`).
+#[cfg(target_os = "windows")]
+pub fn is_high_risk_windows_exec_path(exe_path: &str) -> bool {
+    if exe_path.is_empty() {
+        return false;
+    }
+    let lower = exe_path.to_lowercase();
+    if lower.contains("genesis-seek") || lower.contains("\\windows\\system32\\") {
+        return false;
+    }
+    lower.contains("\\downloads\\")
+        || lower.contains("\\appdata\\local\\temp\\")
+        || lower.contains("\\appdata\\roaming\\")
+        || lower.contains("\\users\\public\\")
+}
+
+/// Windows Pre-Execution / Startup Interception:
+/// Immediately suspends all threads of a newly spawned process from a high-risk path via `NtSuspendProcess`,
+/// scans its executable image with `scanner.rs`, and either resumes (`NtResumeProcess` + LRU cache) if clean
+/// or terminates (`TerminateProcess`) and quarantines (`quarantine.rs`) if malicious.
+#[cfg(target_os = "windows")]
+pub fn intercept_and_scan_windows_process(
+    pid: u32,
+    pname: &str,
+    exe_path: &str,
+    cmd_line: &str,
+) -> Option<(String, String, String)> {
+    let path_obj = Path::new(exe_path);
+    if !exe_path.is_empty() && scanner::is_cached_clean(path_obj) {
+        let (risk, _) = evaluate_process_risk(pname, exe_path, cmd_line);
+        if risk != "Critical" {
+            return None;
+        }
+    }
+
+    let high_risk_path = is_high_risk_windows_exec_path(exe_path);
+    let (behav_risk, behav_reason) = evaluate_process_risk(pname, exe_path, cmd_line);
+
+    if !high_risk_path && behav_risk != "Critical" {
+        return None;
+    }
+
+    unsafe {
+        let handle = OpenProcess(
+            PROCESS_SUSPEND_RESUME | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            pid,
+        );
+
+        let mut suspended = false;
+        if handle != 0 {
+            let status = NtSuspendProcess(handle);
+            suspended = status >= 0;
+        }
+
+        // Scan the frozen executable image on disk
+        let file_detection = if !exe_path.is_empty() && path_obj.exists() {
+            scanner::scan_single_file(path_obj)
+        } else {
+            None
+        };
+
+        let is_malicious = file_detection.is_some() || behav_risk == "Critical";
+
+        if is_malicious {
+            let (threat_name, reason, sha256) = match file_detection {
+                Some(det) => (det.threat_name, det.description, det.sha256),
+                None => (
+                    "Heur.Win32.VolatileProcessExec".to_string(),
+                    behav_reason,
+                    scanner::compute_file_sha256(path_obj).unwrap_or_default(),
+                ),
+            };
+
+            let mut action = if suspended {
+                "Suspended via NtSuspendProcess"
+            } else {
+                "Intercepted"
+            }
+            .to_string();
+
+            if handle != 0 {
+                if TerminateProcess(handle, 1) != 0 {
+                    action = "Frozen & Terminated (NtSuspendProcess + TerminateProcess)".to_string();
+                }
+                CloseHandle(handle);
+            }
+
+            if !exe_path.is_empty() && path_obj.exists() {
+                if quarantine::quarantine_file(exe_path, &threat_name, "Critical", &sha256).is_ok() {
+                    action.push_str(" • Quarantined (.gvault)");
+                }
+            }
+
+            tray_indicator::notify_tray_updated();
+            return Some((threat_name, reason, action));
+        } else {
+            if handle != 0 {
+                if suspended {
+                    let _ = NtResumeProcess(handle);
+                }
+                CloseHandle(handle);
+            }
+            if !exe_path.is_empty() && path_obj.exists() {
+                scanner::cache_clean_verdict(path_obj);
+            }
+            None
+        }
+    }
+}
+
 pub fn inspect_running_processes() -> Vec<ProcessRiskItem> {
     let mut sys = System::new_all();
-    // CPU usage is a delta between two refreshes; a single snapshot always reads 0%.
     std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     sys.refresh_processes();
 
@@ -48,7 +178,6 @@ pub fn inspect_running_processes() -> Vec<ProcessRiskItem> {
 
         let (risk_level, risk_reason) = evaluate_process_risk(&name, &exe_path, &cmd_line);
 
-        // Return all suspicious/critical processes + top resource consumers so UI stays snappy
         if risk_level != "Safe" || memory_mb > 35 || cpu_usage > 2.0 {
             results.push(ProcessRiskItem {
                 pid: pid.as_u32(),
@@ -63,7 +192,6 @@ pub fn inspect_running_processes() -> Vec<ProcessRiskItem> {
         }
     }
 
-    // Sort: Critical first, then Suspicious, then by memory usage
     results.sort_by(|a, b| {
         let rank = |lvl: &str| match lvl {
             "Critical" => 0,
@@ -84,7 +212,6 @@ pub fn evaluate_process_risk(name: &str, exe_path: &str, cmd_line: &str) -> (Str
     let lower_cmd = cmd_line.to_lowercase();
     let lower_name = name.to_lowercase();
 
-    // AppImages (including Genesis Seek's own Linux build) legitimately run from /tmp/.mount_*
     let is_appimage_mount = lower_exe.starts_with("/tmp/.mount_");
 
     // Check 1: Execution from volatile memory or temp directories
@@ -158,7 +285,6 @@ pub fn terminate_process(pid_num: u32) -> Result<String, String> {
 pub fn inspect_persistence_hooks() -> Vec<PersistenceEntry> {
     let mut hooks = Vec::new();
 
-    // Linux & Freedesktop Autostart (~/.config/autostart)
     if let Some(config_dir) = dirs::config_dir() {
         let autostart = config_dir.join("autostart");
         if autostart.exists() {
@@ -193,7 +319,6 @@ pub fn inspect_persistence_hooks() -> Vec<PersistenceEntry> {
             }
         }
 
-        // Systemd user units (~/.config/systemd/user)
         let systemd_user = config_dir.join("systemd").join("user");
         if systemd_user.exists() {
             if let Ok(entries) = fs::read_dir(&systemd_user) {
@@ -220,7 +345,6 @@ pub fn inspect_persistence_hooks() -> Vec<PersistenceEntry> {
         }
     }
 
-    // Windows Startup Folder check (if on Windows)
     if let Some(data_roaming) = dirs::data_dir() {
         let win_startup: PathBuf = data_roaming
             .join("Microsoft")
@@ -244,7 +368,6 @@ pub fn inspect_persistence_hooks() -> Vec<PersistenceEntry> {
         }
     }
 
-    // Shell RC persistence check (~/.bashrc)
     if let Some(home) = dirs::home_dir() {
         let bashrc = home.join(".bashrc");
         if bashrc.exists() {

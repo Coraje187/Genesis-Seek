@@ -606,3 +606,119 @@ pub fn open_extension_directory() -> Result<String, String> {
 
     Ok(ext_path_str)
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeclarativeNetAction {
+    #[serde(rename = "type")]
+    action_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeclarativeNetCondition {
+    #[serde(rename = "urlFilter")]
+    url_filter: String,
+    #[serde(rename = "resourceTypes")]
+    resource_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DeclarativeNetRule {
+    id: usize,
+    priority: u8,
+    action: DeclarativeNetAction,
+    condition: DeclarativeNetCondition,
+}
+
+/// Compile the built-in blocklist and top active malicious domains from URLhaus/PhishStats
+/// into MV3 `DeclarativeNetRequest` format (`rules.json`) across `browser-extension/rules.json`
+/// and staged Firefox/Chromium extension directories.
+pub fn sync_dynamic_browser_rules(domains: &std::collections::HashSet<String>) -> usize {
+    let base_domains = [
+        ("coinhive.com", vec!["script", "xmlhttprequest", "sub_frame", "main_frame"]),
+        ("crypto-loot.com", vec!["script", "xmlhttprequest", "sub_frame", "main_frame"]),
+        ("paypa1-security-verify.com", vec!["main_frame", "sub_frame", "xmlhttprequest"]),
+        ("micros0ft-login-alert.net", vec!["main_frame", "sub_frame", "xmlhttprequest"]),
+        ("steamcommunlty-trade.ru", vec!["main_frame", "sub_frame", "xmlhttprequest"]),
+    ];
+
+    let mut rules: Vec<DeclarativeNetRule> = Vec::with_capacity(512);
+    let mut seen = std::collections::HashSet::new();
+    let mut id_counter: usize = 1;
+
+    for (dom, rtypes) in base_domains {
+        seen.insert(dom.to_string());
+        rules.push(DeclarativeNetRule {
+            id: id_counter,
+            priority: 1,
+            action: DeclarativeNetAction {
+                action_type: "block".to_string(),
+            },
+            condition: DeclarativeNetCondition {
+                url_filter: format!("||{}^", dom),
+                resource_types: rtypes.into_iter().map(String::from).collect(),
+            },
+        });
+        id_counter += 1;
+    }
+
+    let mut sorted_feed: Vec<&String> = domains
+        .iter()
+        .filter(|d| {
+            let s = d.trim();
+            !s.is_empty()
+                && s.contains('.')
+                && s != "localhost"
+                && s != "127.0.0.1"
+                && s != "0.0.0.0"
+                && s.len() <= 120
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        })
+        .collect();
+    sorted_feed.sort();
+
+    // Include up to 500 top active malicious domains so rules.json stays fast and well within MV3 static ruleset limits
+    for dom in sorted_feed.into_iter().take(500) {
+        if !seen.insert(dom.clone()) {
+            continue;
+        }
+        rules.push(DeclarativeNetRule {
+            id: id_counter,
+            priority: 1,
+            action: DeclarativeNetAction {
+                action_type: "block".to_string(),
+            },
+            condition: DeclarativeNetCondition {
+                url_filter: format!("||{}^", dom),
+                resource_types: vec![
+                    "main_frame".to_string(),
+                    "sub_frame".to_string(),
+                    "script".to_string(),
+                    "xmlhttprequest".to_string(),
+                ],
+            },
+        });
+        id_counter += 1;
+    }
+
+    if let Ok(json) = serde_json::to_string_pretty(&rules) {
+        let ext_dir = resolve_extension_dir();
+        if ext_dir.exists() {
+            let _ = fs::write(ext_dir.join("rules.json"), &json);
+        }
+        if let Some(dl) = dirs::download_dir() {
+            let staged = dl.join("Genesis-Seek-Browser-Guard");
+            if staged.exists() {
+                let _ = fs::write(staged.join("rules.json"), &json);
+            }
+        }
+        if let Some(local_data) = dirs::data_local_dir() {
+            let fallback = local_data.join("genesis-seek").join("browser-extension");
+            if fallback.exists() {
+                let _ = fs::write(fallback.join("rules.json"), &json);
+            }
+        }
+    }
+
+    rules.len()
+}

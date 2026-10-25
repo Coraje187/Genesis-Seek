@@ -25,18 +25,24 @@ const fallbackState = {
     ransomware_canary_guard: true,
     exploit_process_guard: true,
     auto_quarantine_realtime: true,
+    shield_mode: "Kernel Pre-Exec (fanotify)",
+    last_intel_sync: new Date().toISOString(),
+    encrypted_quarantine: true,
   },
   feedStatus: {
-    version: "2026.10.16.01",
+    version: "2026.10.25.01",
     total_hash_signatures: 148520,
     total_web_indicators: 64290,
     yara_heuristic_rules: 412,
     last_synced: new Date().toISOString(),
+    last_intel_sync: new Date().toISOString(),
+    shield_mode: "Kernel Pre-Exec (fanotify)",
+    encrypted_quarantine: true,
     feed_sources: [
-      "Genesis Seek Core Signatures",
+      "Genesis Seek Core Signatures (SQLite)",
       "Abuse.ch MalwareBazaar SHA-256 Stream",
-      "Abuse.ch URLhaus & Feodo C2 Tracker",
-      "OpenPhish & Homograph Phishing Feed",
+      "Abuse.ch URLhaus & PhishStats Tracker",
+      "Community YARA-X Rules (Hot-Reloaded)",
     ],
   },
   scannedTotal: 1420,
@@ -226,19 +232,22 @@ function simulateBackend(cmd, args) {
     }
     case "get_feed_status":
       return { ...fallbackState.feedStatus };
-    case "sync_threat_feeds": {
+    case "sync_threat_feeds":
+    case "sync_threat_intelligence": {
       fallbackState.feedStatus.total_hash_signatures += 184;
       fallbackState.feedStatus.total_web_indicators += 95;
       fallbackState.feedStatus.yara_heuristic_rules += 4;
       fallbackState.feedStatus.version =
-        "2026.10.16." + Math.floor(10 + Math.random() * 89);
-      fallbackState.feedStatus.last_synced = new Date().toISOString();
+        "2026.10.25." + Math.floor(10 + Math.random() * 89);
+      const nowIso = new Date().toISOString();
+      fallbackState.feedStatus.last_synced = nowIso;
+      fallbackState.feedStatus.last_intel_sync = nowIso;
       fallbackState.events.unshift({
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso,
         module: "Threat Intel",
         severity: "Info",
-        title: `Threat Feeds Synced (v${fallbackState.feedStatus.version})`,
-        target: "Abuse.ch MalwareBazaar, URLhaus & OpenPhish",
+        title: `Threat Feeds, SQLite DB & YARA Rules Synced (v${fallbackState.feedStatus.version})`,
+        target: "Abuse.ch MalwareBazaar, URLhaus, PhishStats & Community YARA",
         action_taken: "Updated",
       });
       return { ...fallbackState.feedStatus };
@@ -533,6 +542,20 @@ function updateProtectionRing(state) {
     if (al && typeof state.browser_extension_autoload === "boolean") {
       al.checked = state.browser_extension_autoload;
       syncExtAutoloadBadge(state.browser_extension_autoload);
+    }
+    const modeEl = document.getElementById("sidebar-shield-mode");
+    if (modeEl && state.shield_mode) {
+      modeEl.textContent = state.shield_mode;
+      modeEl.className =
+        state.shield_mode.includes("fanotify") || state.shield_mode.includes("Suspend")
+          ? "text-ok"
+          : "text-accent";
+    }
+    const vaultEl = document.getElementById("sidebar-vault-crypto");
+    if (vaultEl && state.encrypted_quarantine !== undefined) {
+      vaultEl.textContent = state.encrypted_quarantine
+        ? "ChaCha20-Poly1305 (.gvault)"
+        : "Standard Vault";
     }
   }
   if (typeof window.recalculateProtectionNow === "function") {

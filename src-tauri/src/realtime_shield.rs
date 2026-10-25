@@ -18,6 +18,27 @@ use uuid::Uuid;
 
 pub const BRIDGE_ADDR: &str = "127.0.0.1:49152";
 
+#[cfg(target_os = "windows")]
+const DEFAULT_SHIELD_MODE: &str = "Win32 Process Suspend";
+#[cfg(not(target_os = "windows"))]
+const DEFAULT_SHIELD_MODE: &str = "User-Space Watcher";
+
+pub static ACTIVE_SHIELD_MODE: Lazy<Mutex<String>> =
+    Lazy::new(|| Mutex::new(DEFAULT_SHIELD_MODE.to_string()));
+
+pub fn get_active_shield_mode() -> String {
+    ACTIVE_SHIELD_MODE
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| DEFAULT_SHIELD_MODE.to_string())
+}
+
+pub fn set_active_shield_mode(mode: &str) {
+    if let Ok(mut guard) = ACTIVE_SHIELD_MODE.lock() {
+        *guard = mode.to_string();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShieldState {
@@ -27,6 +48,9 @@ pub struct ShieldState {
     pub exploit_process_guard: bool,
     pub auto_quarantine_realtime: bool,
     pub browser_extension_autoload: bool,
+    pub shield_mode: String,
+    pub last_intel_sync: Option<String>,
+    pub encrypted_quarantine: bool,
 }
 
 impl Default for ShieldState {
@@ -38,6 +62,9 @@ impl Default for ShieldState {
             exploit_process_guard: true,
             auto_quarantine_realtime: true,
             browser_extension_autoload: true,
+            shield_mode: DEFAULT_SHIELD_MODE.to_string(),
+            last_intel_sync: None,
+            encrypted_quarantine: true,
         }
     }
 }
@@ -86,14 +113,22 @@ pub static SHIELD_STATE: Lazy<Mutex<ShieldState>> = Lazy::new(|| {
 });
 
 pub fn current_shields() -> ShieldState {
-    SHIELD_STATE.lock().map(|s| s.clone()).unwrap_or_default()
+    let mut state = SHIELD_STATE.lock().map(|s| s.clone()).unwrap_or_default();
+    state.shield_mode = get_active_shield_mode();
+    state.last_intel_sync = threat_intel_and_net::last_synced_rfc3339();
+    state.encrypted_quarantine = true;
+    state
 }
 
 pub fn save_shield_state(state: &ShieldState) {
+    let mut updated = state.clone();
+    updated.shield_mode = get_active_shield_mode();
+    updated.last_intel_sync = threat_intel_and_net::last_synced_rfc3339();
+    updated.encrypted_quarantine = true;
     if let Ok(mut s) = SHIELD_STATE.lock() {
-        *s = state.clone();
+        *s = updated.clone();
     }
-    if let Ok(json) = serde_json::to_string_pretty(state) {
+    if let Ok(json) = serde_json::to_string_pretty(&updated) {
         let _ = fs::write(shield_state_path(), json);
     }
 }
@@ -246,9 +281,225 @@ fn is_auto_quarantine_severity(sev: &str) -> bool {
     sev == "Critical" || sev == "High"
 }
 
-/// Real-time file guard: watches Downloads, Desktop and Temp with OS-native notifications
-/// (inotify / ReadDirectoryChangesW) and scans files as they are created or modified.
+/// Linux Tier 1 Kernel Pre-Execution Blocker (`fanotify` with `FAN_OPEN_EXEC_PERM | FAN_CLOSE_WRITE`).
+/// Requires `CAP_SYS_ADMIN` (granted by `install.sh` via `setcap`) or root.
+/// Returns `true` if `fanotify` initialized and marked at least one mount point; returns `false` on `EPERM`
+/// so the caller gracefully falls back to Tier 2 (`notify` User-Space Watcher).
+#[cfg(target_os = "linux")]
+fn try_spawn_linux_fanotify_shield() -> bool {
+    use std::ffi::CString;
+    let fan_fd = unsafe {
+        libc::fanotify_init(
+            libc::FAN_CLOEXEC | libc::FAN_CLASS_CONTENT,
+            (libc::O_RDONLY | libc::O_LARGEFILE) as u32,
+        )
+    };
+    if fan_fd < 0 {
+        return false;
+    }
+
+    let mut targets: Vec<PathBuf> = vec![
+        PathBuf::from("/home"),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/var/tmp"),
+        PathBuf::from("/dev/shm"),
+    ];
+    if let Some(dl) = dirs::download_dir() {
+        targets.push(dl);
+    }
+
+    let mask: u64 = libc::FAN_OPEN_EXEC_PERM | libc::FAN_CLOSE_WRITE;
+    let mut marked_mounts = Vec::new();
+
+    for dir in targets {
+        if !dir.exists() {
+            continue;
+        }
+        if let Ok(c_path) = CString::new(dir.to_string_lossy().as_bytes()) {
+            let rc = unsafe {
+                libc::fanotify_mark(
+                    fan_fd,
+                    libc::FAN_MARK_ADD | libc::FAN_MARK_MOUNT,
+                    mask,
+                    libc::AT_FDCWD,
+                    c_path.as_ptr(),
+                )
+            };
+            if rc == 0 {
+                marked_mounts.push(dir.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    if marked_mounts.is_empty() {
+        unsafe {
+            libc::close(fan_fd);
+        }
+        return false;
+    }
+
+    set_active_shield_mode("Kernel Pre-Exec (fanotify)");
+    log_security_event(
+        "File Guard",
+        "Info",
+        "Kernel Pre-Execution Shield Active (fanotify Tier 1)",
+        &marked_mounts.join(", "),
+        "Instruction-Zero Blocking",
+    );
+
+    let self_pid = std::process::id() as i32;
+
+    thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = unsafe { libc::read(fan_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
+            if n <= 0 {
+                continue;
+            }
+            let mut offset: usize = 0;
+            let meta_size = std::mem::size_of::<libc::fanotify_event_metadata>();
+            let shields = current_shields();
+
+            while offset + meta_size <= n as usize {
+                let meta = unsafe {
+                    *(buf.as_ptr().add(offset) as *const libc::fanotify_event_metadata)
+                };
+                if meta.event_len < meta_size as u32 {
+                    break;
+                }
+                if meta.fd >= 0 {
+                    let is_perm = (meta.mask & libc::FAN_OPEN_EXEC_PERM) != 0;
+                    if !shields.real_time_file_guard || meta.pid == self_pid {
+                        if is_perm {
+                            let resp = libc::fanotify_response {
+                                fd: meta.fd,
+                                response: libc::FAN_ALLOW,
+                            };
+                            unsafe {
+                                libc::write(
+                                    fan_fd,
+                                    &resp as *const _ as *const libc::c_void,
+                                    std::mem::size_of::<libc::fanotify_response>(),
+                                );
+                            }
+                        }
+                        unsafe {
+                            libc::close(meta.fd);
+                        }
+                    } else {
+                        let proc_fd_link = format!("/proc/self/fd/{}", meta.fd);
+                        let target_path = fs::read_link(&proc_fd_link)
+                            .unwrap_or_else(|_| PathBuf::from(&proc_fd_link));
+
+                        if scanner::is_excluded_path(&target_path)
+                            || scanner::is_cached_clean(&target_path)
+                        {
+                            if is_perm {
+                                let resp = libc::fanotify_response {
+                                    fd: meta.fd,
+                                    response: libc::FAN_ALLOW,
+                                };
+                                unsafe {
+                                    libc::write(
+                                        fan_fd,
+                                        &resp as *const _ as *const libc::c_void,
+                                        std::mem::size_of::<libc::fanotify_response>(),
+                                    );
+                                }
+                            }
+                            unsafe {
+                                libc::close(meta.fd);
+                            }
+                        } else {
+                            let det_opt = scanner::scan_single_file(&target_path);
+                            if let Some(det) = det_opt {
+                                if is_perm {
+                                    let resp = libc::fanotify_response {
+                                        fd: meta.fd,
+                                        response: libc::FAN_DENY,
+                                    };
+                                    unsafe {
+                                        libc::write(
+                                            fan_fd,
+                                            &resp as *const _ as *const libc::c_void,
+                                            std::mem::size_of::<libc::fanotify_response>(),
+                                        );
+                                    }
+                                }
+                                unsafe {
+                                    libc::close(meta.fd);
+                                }
+
+                                let q_msg = if shields.auto_quarantine_realtime {
+                                    match quarantine::quarantine_file(
+                                        &det.file_path,
+                                        &det.threat_name,
+                                        &det.severity,
+                                        &det.sha256,
+                                    ) {
+                                        Ok(_) => "Blocked at Instruction Zero & Quarantined (.gvault)".to_string(),
+                                        Err(e) => format!("Blocked at Instruction Zero (quarantine err: {})", e),
+                                    }
+                                } else {
+                                    "Blocked at Instruction Zero (FAN_DENY)".to_string()
+                                };
+
+                                log_security_event(
+                                    "File Guard",
+                                    &det.severity,
+                                    &format!("fanotify Pre-Exec Blocked: {}", det.threat_name),
+                                    &det.file_path,
+                                    &q_msg,
+                                );
+                                crate::tray_indicator::notify_tray_updated();
+                            } else {
+                                if is_perm {
+                                    let resp = libc::fanotify_response {
+                                        fd: meta.fd,
+                                        response: libc::FAN_ALLOW,
+                                    };
+                                    unsafe {
+                                        libc::write(
+                                            fan_fd,
+                                            &resp as *const _ as *const libc::c_void,
+                                            std::mem::size_of::<libc::fanotify_response>(),
+                                        );
+                                    }
+                                }
+                                unsafe {
+                                    libc::close(meta.fd);
+                                }
+                            }
+                        }
+                    }
+                }
+                offset += meta.event_len as usize;
+            }
+        }
+    });
+
+    true
+}
+
+/// Real-time file guard:
+/// - On Linux: attempts Tier 1 `fanotify` Kernel Pre-Execution Blocking (`FAN_OPEN_EXEC_PERM | FAN_CLOSE_WRITE`),
+///   and gracefully falls back to Tier 2 (`notify` User-Space Watcher) on `EPERM` without crashing.
+/// - On Windows: watches Downloads, Desktop, AppData\Roaming and Temp with `ReadDirectoryChangesW` alongside
+///   `Win32 Process Suspend` (`NtSuspendProcess`) in `spawn_process_monitor()`.
 pub fn spawn_realtime_file_watcher() {
+    #[cfg(target_os = "linux")]
+    {
+        if try_spawn_linux_fanotify_shield() {
+            return;
+        }
+        set_active_shield_mode("User-Space Watcher");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        set_active_shield_mode("Win32 Process Suspend");
+    }
+
     thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
@@ -266,6 +517,9 @@ pub fn spawn_realtime_file_watcher() {
         if let Some(dt) = dirs::desktop_dir() {
             watch_dirs.push(dt);
         }
+        if let Some(cfg) = dirs::config_dir() {
+            watch_dirs.push(cfg);
+        }
         watch_dirs.push(std::env::temp_dir());
 
         let mut watched = Vec::new();
@@ -274,7 +528,13 @@ pub fn spawn_realtime_file_watcher() {
                 watched.push(dir.to_string_lossy().to_string());
             }
         }
-        log_security_event("File Guard", "Info", "Real-Time File System Guard Active", &watched.join(", "), "Monitoring");
+        log_security_event(
+            "File Guard",
+            "Info",
+            &format!("Real-Time File System Guard Active ({})", get_active_shield_mode()),
+            &watched.join(", "),
+            "Monitoring",
+        );
 
         // Paths we already acted on, to avoid duplicate events from bursts of Modify notifications.
         let mut recently_handled: HashMap<PathBuf, Instant> = HashMap::new();
@@ -298,7 +558,7 @@ pub fn spawn_realtime_file_watcher() {
 
                 let action = if shields.auto_quarantine_realtime && is_auto_quarantine_severity(&det.severity) {
                     match quarantine::quarantine_file(&det.file_path, &det.threat_name, &det.severity, &det.sha256) {
-                        Ok(_) => "Auto-Quarantined".to_string(),
+                        Ok(_) => "Auto-Quarantined (.gvault)".to_string(),
                         Err(e) => format!("Detected (quarantine failed: {})", e),
                     }
                 } else {
@@ -312,6 +572,7 @@ pub fn spawn_realtime_file_watcher() {
                     &det.file_path,
                     &action,
                 );
+                crate::tray_indicator::notify_tray_updated();
             }
         }
     });
@@ -385,13 +646,17 @@ pub fn spawn_ransomware_canary() {
     });
 }
 
-/// Background process monitor: every 15 s, flags newly seen Critical-risk processes
-/// and automatically injects Browser Guard into newly launched Firefox sessions.
+/// Background process monitor:
+/// - On Windows: performs instant thread suspension (`NtSuspendProcess` via `ntdll.dll`) on newly spawned
+///   processes from high-risk paths (`Downloads`, `AppData\Local\Temp`, `AppData\Roaming`, `Public`),
+///   scans the executable image with `scanner.rs`, resumes if clean, or terminates + quarantines if malicious.
+/// - Across all platforms: flags Critical-risk processes and auto-injects Browser Guard into Firefox sessions.
 pub fn spawn_process_monitor() {
     thread::spawn(move || {
         use sysinfo::System;
         let mut sys = System::new();
         let mut alerted: HashSet<u32> = HashSet::new();
+        let mut inspected_pids: HashSet<u32> = HashSet::new();
         let mut ff_injected: HashSet<u32> = HashSet::new();
         let self_pid = std::process::id();
         loop {
@@ -422,6 +687,26 @@ pub fn spawn_process_monitor() {
                     }
                     let exe = p.exe().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
                     let cmd = p.cmd().join(" ");
+
+                    #[cfg(target_os = "windows")]
+                    if !inspected_pids.contains(&pid_u) {
+                        inspected_pids.insert(pid_u);
+                        if let Some((threat_name, _reason, action_msg)) =
+                            process_guard::intercept_and_scan_windows_process(pid_u, pname, &exe, &cmd)
+                        {
+                            alerted.insert(pid_u);
+                            log_security_event(
+                                "Process Guard",
+                                "Critical",
+                                &format!("Win32 Process Suspended & Blocked: {} (PID {})", pname, pid_u),
+                                &format!("{} — {}", threat_name, exe),
+                                &action_msg,
+                            );
+                            crate::tray_indicator::notify_tray_updated();
+                            continue;
+                        }
+                    }
+
                     let (risk, reason) = process_guard::evaluate_process_risk(pname, &exe, &cmd);
                     if risk == "Critical" {
                         alerted.insert(pid_u);
@@ -432,12 +717,17 @@ pub fn spawn_process_monitor() {
                             &reason,
                             "Alerted — review in Process Guard",
                         );
+                        crate::tray_indicator::notify_tray_updated();
                     }
                 }
                 alerted.retain(|p| alive.contains(p));
+                inspected_pids.retain(|p| alive.contains(p));
                 ff_injected.retain(|p| alive.contains(p));
             }
-            thread::sleep(Duration::from_secs(15));
+            #[cfg(target_os = "windows")]
+            thread::sleep(Duration::from_secs(2));
+            #[cfg(not(target_os = "windows"))]
+            thread::sleep(Duration::from_secs(10));
         }
     });
 }
