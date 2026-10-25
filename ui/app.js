@@ -1,4 +1,4 @@
-// Genesis Seek — Frontend Controller (Tauri Native IPC + Persistent Theme Memory + Browser Fallback)
+﻿// Genesis Seek — Frontend Controller (Tauri Native IPC + Persistent Theme Memory + Browser Fallback)
 
 const THEME_STORAGE_KEY = "genesis_seek_theme";
 
