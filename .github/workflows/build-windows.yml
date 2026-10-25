@@ -34,93 +34,7 @@ jobs:
       - name: Package Windows ZIP & Browser Guard Extensions
         shell: pwsh
         run: |
-          $ver = '${{ github.ref_name }}'
-          if (-not $ver) { $ver = 'v0.3.0' }
-
-          # 1. Package Chrome, Microsoft Edge & Brave Extension (service_worker Manifest V3)
-          $chromeStage = "chrome_edge_stage"
-          New-Item -ItemType Directory -Path $chromeStage | Out-Null
-          Copy-Item -Recurse browser-extension/* $chromeStage
-          $chromeManifest = @"
-          {
-            "manifest_version": 3,
-            "name": "Genesis Seek Browser Guard",
-            "version": "0.3.0",
-            "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
-            "permissions": ["tabs", "storage", "declarativeNetRequest"],
-            "host_permissions": ["<all_urls>", "http://127.0.0.1:49152/*"],
-            "background": { "service_worker": "background.js" },
-            "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content_guard.js"], "run_at": "document_idle" }],
-            "declarative_net_request": { "rule_resources": [{ "id": "genesis_seek_blocklist", "enabled": true, "path": "rules.json" }] },
-            "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
-            "action": { "default_title": "Genesis Seek Browser Guard", "default_popup": "popup.html", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } }
-          }
-"@
-          Set-Content -Path "$chromeStage/manifest.json" -Value $chromeManifest -Encoding UTF8
-          $chromeZip = "Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-$ver.zip"
-          Compress-Archive -Path "$chromeStage/*" -DestinationPath $chromeZip -Force
-          Remove-Item -Recurse -Force $chromeStage
-
-          # 2. Package Firefox Extension (scripts + gecko Manifest V3)
-          $ffStage = "firefox_stage"
-          New-Item -ItemType Directory -Path $ffStage | Out-Null
-          Copy-Item -Recurse browser-extension/* $ffStage
-          $ffManifest = @"
-          {
-            "manifest_version": 3,
-            "name": "Genesis Seek Browser Guard",
-            "version": "0.3.0",
-            "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
-            "permissions": ["tabs", "storage", "declarativeNetRequest"],
-            "host_permissions": ["<all_urls>", "http://127.0.0.1:49152/*"],
-            "background": { "scripts": ["background.js"] },
-            "browser_specific_settings": {
-              "gecko": {
-                "id": "browser-guard@genesisseek.io",
-                "strict_min_version": "109.0",
-                "data_collection_permissions": { "required": ["none"] }
-              }
-            },
-            "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content_guard.js"], "run_at": "document_idle" }],
-            "declarative_net_request": { "rule_resources": [{ "id": "genesis_seek_blocklist", "enabled": true, "path": "rules.json" }] },
-            "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
-            "action": { "default_title": "Genesis Seek Browser Guard", "default_popup": "popup.html", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } }
-          }
-"@
-          Set-Content -Path "$ffStage/manifest.json" -Value $ffManifest -Encoding UTF8
-          $ffZip = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.zip"
-          $ffXpi = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.xpi"
-          Compress-Archive -Path "$ffStage/*" -DestinationPath $ffZip -Force
-          Copy-Item $ffZip $ffXpi
-          Remove-Item -Recurse -Force $ffStage
-
-          # 3. Package Complete Windows ZIP (exe + rules + extension + README)
-          $zipName = "genesis-seek-$ver-windows-x86_64.zip"
-          $winStaging = "win_staging"
-          New-Item -ItemType Directory -Path $winStaging | Out-Null
-          Copy-Item src-tauri/target/release/genesis-seek.exe $winStaging/genesis-seek.exe
-          if (Test-Path rules) { Copy-Item -Recurse rules $winStaging/rules }
-          if (Test-Path browser-extension) { Copy-Item -Recurse browser-extension $winStaging/browser-extension }
-          if (Test-Path README.md) { Copy-Item README.md $winStaging/README.md }
-          Compress-Archive -Path "$winStaging/*" -DestinationPath $zipName -Force
-          Remove-Item -Recurse -Force $winStaging
-
-          # 4. Package Linux Installer bundle
-          $linZip = "genesis-seek-$ver-linux-installer.zip"
-          $linStaging = "lin_staging"
-          New-Item -ItemType Directory -Path $linStaging | Out-Null
-          if (Test-Path install.sh) { Copy-Item install.sh $linStaging/install.sh }
-          if (Test-Path rules) { Copy-Item -Recurse rules $linStaging/rules }
-          if (Test-Path browser-extension) { Copy-Item -Recurse browser-extension $linStaging/browser-extension }
-          if (Test-Path README.md) { Copy-Item README.md $linStaging/README.md }
-          Compress-Archive -Path "$linStaging/*" -DestinationPath $linZip -Force
-          Remove-Item -Recurse -Force $linStaging
-
-          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
-          echo "CHROME_ZIP=$chromeZip" >> $env:GITHUB_ENV
-          echo "FF_ZIP=$ffZip" >> $env:GITHUB_ENV
-          echo "FF_XPI=$ffXpi" >> $env:GITHUB_ENV
-          echo "LIN_ZIP=$linZip" >> $env:GITHUB_ENV
+          pwsh -ExecutionPolicy Bypass -File ./package_release.ps1
 
       - name: Upload Windows & Extension Assets to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -152,12 +66,11 @@ jobs:
             ---
             *© 2026 Genesis Grid Labs. Free, Secure, Plug-and-Play Local AI & Security Grid.*
           files: |
-            ${{ env.ZIP_NAME }}
-            ${{ env.CHROME_ZIP }}
-            ${{ env.FF_ZIP }}
-            ${{ env.FF_XPI }}
-            ${{ env.LIN_ZIP }}
-            src-tauri/target/release/genesis-seek.exe
+            release_assets/genesis-seek-*.zip
+            release_assets/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-*.zip
+            release_assets/Genesis-Seek-Browser-Guard-for-Firefox-*.zip
+            release_assets/Genesis-Seek-Browser-Guard-for-Firefox-*.xpi
+            release_assets/genesis-seek.exe
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
         env:
