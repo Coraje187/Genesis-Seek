@@ -30,10 +30,11 @@
    - Neutralizes suspicious files via XOR payload obfuscation, strips execution permissions (`0600`), stores them as `.gsvault` blobs, and supports one-click **Restore** (with automatic SHA-256 allowlisting so restored files aren't re-quarantined) or **Zero-Fill Shred**.
 
 5. **Genesis Seek Browser Guard + One-Click Installer ([`browser-extension/`](browser-extension/) & [`src-tauri/src/extension_installer.rs`](src-tauri/src/extension_installer.rs))**
-   - Manifest V3 browser extension for **Chrome, Brave, Microsoft Edge, Chromium, and Firefox**.
+   - **Mozilla Firefox**: ✅ **Official Signed Add-on Live on [Mozilla Add-ons (AMO)](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)**
+   - **Microsoft Edge & Google Chrome**: Cross-platform Manifest V3 architecture ready.
    - Blocks cryptojackers (`coinhive`, `crypto-loot`) and phishing hosts via `declarativeNetRequest` ([`rules.json`](browser-extension/rules.json)).
    - Detects **IDN Homograph (Punycode `xn--`)** attacks, deceptive `.zip`/`.mov` brand spoofing, raw-IP executable downloads, and unencrypted HTTP password forms.
-   - Includes a **One-Click Browser Extension Installer** inside the desktop app that detects installed browsers and launches them with the extension pre-loaded or stages the extension package.
+   - Includes a **1-Click Browser Extension Installer & Reminder Banner** directly inside the desktop dashboard that automatically links to the live Mozilla Add-on.
 
 6. **Dual Theme System with Persistent Memory ("🌙 Obsidian Night" & "☀️ Warm Cream Light")**
    - Switch seamlessly between **Obsidian Night** and **Warm Cream Light** in both the Desktop UI and Browser Guard extension. Your preference is saved both in `localStorage` (pre-paint zero-flicker loader) and on disk (`~/.config/genesis-seek/user_preferences.json`).
