@@ -81,6 +81,9 @@ async function invokeBackend(cmd, args = {}) {
     try {
       return await window.__TAURI__.core.invoke(cmd, args);
     } catch (err) {
+      if (cmd === "virustotal_lookup" || cmd === "save_virustotal_config") {
+        throw err;
+      }
       console.warn(`Tauri IPC error on ${cmd}, using fallback:`, err);
     }
   }
@@ -349,6 +352,43 @@ function simulateBackend(cmd, args) {
       return "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension";
     case "get_live_memory_usage":
       return { pid: 86151, rss_mb: 174.2, private_mb: 44.8 };
+    case "get_virustotal_status":
+      return {
+        configured: Boolean(fallbackState.vtConfigured),
+        masked_key: fallbackState.vtConfigured ? "vt••••demo" : "Not Configured",
+        source: fallbackState.vtConfigured ? "Browser Preview" : "None",
+        auto_check_suspicious: Boolean(fallbackState.vtAutoCheck),
+      };
+    case "save_virustotal_config":
+      if (args.apiKey && args.apiKey.trim()) {
+        fallbackState.vtConfigured = true;
+      }
+      fallbackState.vtAutoCheck = Boolean(args.autoCheckSuspicious);
+      return simulateBackend("get_virustotal_status", {});
+    case "clear_virustotal_key":
+      fallbackState.vtConfigured = false;
+      return simulateBackend("get_virustotal_status", {});
+    case "virustotal_lookup": {
+      const t = (args.target || "").toLowerCase();
+      const isMal = t.startsWith("275a021b") || t.startsWith("ed01ebfb");
+      return {
+        query_type: t.includes(".") ? "domain" : "file_hash",
+        target: args.target,
+        indicator: args.target,
+        found_in_vt: true,
+        malicious: isMal ? 64 : 0,
+        suspicious: isMal ? 2 : 0,
+        undetected: isMal ? 4 : 68,
+        harmless: isMal ? 0 : 2,
+        total_engines: 70,
+        verdict: isMal ? "Malicious" : "Clean",
+        threat_label: isMal ? "EICAR / Known Malware Signature" : "Clean / Harmless",
+        flagged_engines: isMal
+          ? ["Microsoft: VirTool:Win32/EICAR_Test_File", "Kaspersky: EICAR-Test-File", "BitDefender: EICAR-Test-File (not a virus)"]
+          : [],
+        permalink: `https://www.virustotal.com/gui/search/${encodeURIComponent(args.target)}`,
+      };
+    }
     case "get_security_events":
       return [...fallbackState.events];
     default:
@@ -546,7 +586,10 @@ function renderDetections(detections) {
       <td><span class="sev-badge sev-${d.severity}">${d.severity}</span></td>
       <td>${d.detection_engine}<div class="muted small">Entropy: ${d.entropy} bits/B</div></td>
       <td><code>${d.file_path}</code></td>
-      <td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-outline" style="padding:5px 9px;font-size:0.75rem;" onclick="checkHashOnVt('${d.sha256}')" title="Check SHA-256 across 70+ engines on VirusTotal">
+          VT Check
+        </button>
         <button class="btn btn-danger" onclick="quarantineFile('${d.file_path.replace(/\\/g, "\\\\")}', '${d.threat_name}', '${d.severity}', '${d.sha256}')">
           Quarantine
         </button>
@@ -633,6 +676,7 @@ document.querySelectorAll(".chip[data-url]").forEach((chip) => {
 async function refreshNetworkAndFeeds() {
   const feed = await invokeBackend("get_feed_status");
   renderFeedStatus(feed);
+  await refreshVtStatus();
 
   const sockets = await invokeBackend("get_network_connections");
   const tbody = document.getElementById("network-tbody");
@@ -698,6 +742,168 @@ document.getElementById("btn-sync-feeds").addEventListener("click", async () => 
 document
   .getElementById("btn-refresh-network")
   .addEventListener("click", refreshNetworkAndFeeds);
+
+// VirusTotal v3 Multi-Engine Cloud Integration (Windows & Linux)
+async function refreshVtStatus() {
+  try {
+    const st = await invokeBackend("get_virustotal_status");
+    if (!st) return;
+    const badge = document.getElementById("vt-status-badge");
+    const info = document.getElementById("vt-key-source-info");
+    const sidebarVt = document.getElementById("sidebar-vt-status");
+    const autoCheckEl = document.getElementById("toggle-vt-autocheck");
+
+    if (autoCheckEl && typeof st.auto_check_suspicious === "boolean") {
+      autoCheckEl.checked = st.auto_check_suspicious;
+    }
+
+    if (st.configured) {
+      if (badge) {
+        badge.textContent = `ACTIVE • ${st.masked_key}`;
+        badge.className = "sev-badge sev-Safe";
+      }
+      if (info) {
+        info.textContent = `Key Source: ${st.source} (${st.masked_key}) • 70+ Engine SHA-256 & Domain Lookups Ready`;
+      }
+      if (sidebarVt) {
+        sidebarVt.textContent = "Active • 70+ Engines";
+        sidebarVt.className = "text-ok";
+      }
+    } else {
+      if (badge) {
+        badge.textContent = "OPTIONAL • NO KEY SET";
+        badge.className = "sev-badge sev-Medium";
+      }
+      if (info) {
+        info.textContent =
+          "Key Status: Not configured (Genesis Seek local engines & Abuse.ch feeds remain 100% active without a key).";
+      }
+      if (sidebarVt) {
+        sidebarVt.textContent = "Optional • Standby";
+        sidebarVt.className = "text-warn";
+      }
+    }
+  } catch (e) {
+    console.warn("VT status error:", e);
+  }
+}
+
+window.saveVtSettings = async function (includeKeyInput = true) {
+  const keyInput = document.getElementById("vt-api-key-input");
+  const autoCheckEl = document.getElementById("toggle-vt-autocheck");
+  const rawKey = includeKeyInput && keyInput ? keyInput.value.trim() : null;
+  const autoCheck = autoCheckEl ? Boolean(autoCheckEl.checked) : false;
+
+  try {
+    await invokeBackend("save_virustotal_config", {
+      apiKey: rawKey || null,
+      autoCheckSuspicious: autoCheck,
+    });
+    if (includeKeyInput && keyInput) {
+      keyInput.value = "";
+    }
+    await refreshVtStatus();
+    await refreshEvents();
+  } catch (err) {
+    alert("Failed to save VirusTotal settings: " + err);
+  }
+};
+
+async function runVtLookup(targetStr) {
+  const target = (targetStr || "").trim();
+  if (!target) return;
+  const card = document.getElementById("vt-result-card");
+  if (!card) return;
+  card.classList.remove("hidden");
+  card.innerHTML = `<span class="muted">Querying VirusTotal v3 (70+ engines) for <code>${target}</code>...</span>`;
+
+  try {
+    const res = await invokeBackend("virustotal_lookup", { target });
+    const sevClass =
+      res.verdict === "Malicious"
+        ? "sev-Critical"
+        : res.verdict === "Suspicious"
+        ? "sev-High"
+        : res.verdict === "Clean"
+        ? "sev-Safe"
+        : "sev-Medium";
+
+    const enginesHtml =
+      res.flagged_engines && res.flagged_engines.length
+        ? `<div style="margin-top:8px;font-size:0.8rem;"><strong>Flagging Engines:</strong> <code>${res.flagged_engines.join(" • ")}</code></div>`
+        : "";
+
+    card.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <div>
+          <span class="sev-badge ${sevClass}">${res.verdict.toUpperCase()}</span>
+          <strong style="margin-left:8px;font-size:0.95rem;">${res.threat_label}</strong>
+        </div>
+        <div class="pill-tag">
+          ${
+            res.found_in_vt
+              ? `${res.malicious + res.suspicious} / ${res.total_engines} Engines Flagged`
+              : "Unseen Hash (0 Detections)"
+          }
+        </div>
+      </div>
+      <div class="muted small" style="margin-top:8px;word-break:break-all;">
+        <strong>Indicator (${res.query_type === "file_hash" ? "SHA-256" : "Domain"}):</strong> <code>${res.indicator}</code>
+      </div>
+      ${
+        res.found_in_vt
+          ? `<div class="muted small" style="margin-top:4px;">
+              Malicious: <strong>${res.malicious}</strong> • Suspicious: <strong>${res.suspicious}</strong> • Harmless: <strong>${res.harmless}</strong> • Undetected: <strong>${res.undetected}</strong>
+            </div>`
+          : ""
+      }
+      ${enginesHtml}
+    `;
+    await refreshEvents();
+  } catch (err) {
+    card.innerHTML = `
+      <span class="sev-badge sev-Critical">VIRUSTOTAL LOOKUP INFO</span>
+      <span class="small" style="margin-left:8px;">${err}</span>
+    `;
+  }
+}
+
+window.checkHashOnVt = async function (sha256) {
+  window.switchTab("network-intel");
+  const input = document.getElementById("vt-lookup-input");
+  if (input) input.value = sha256;
+  await runVtLookup(sha256);
+};
+
+const btnSaveVt = document.getElementById("btn-save-vt-key");
+if (btnSaveVt) {
+  btnSaveVt.addEventListener("click", () => window.saveVtSettings(true));
+}
+
+const btnClearVt = document.getElementById("btn-clear-vt-key");
+if (btnClearVt) {
+  btnClearVt.addEventListener("click", async () => {
+    await invokeBackend("clear_virustotal_key");
+    await refreshVtStatus();
+  });
+}
+
+const btnVtLookup = document.getElementById("btn-vt-lookup");
+if (btnVtLookup) {
+  btnVtLookup.addEventListener("click", () => {
+    const val = document.getElementById("vt-lookup-input")?.value || "";
+    runVtLookup(val);
+  });
+}
+
+document.querySelectorAll(".chip[data-vt]").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const val = chip.getAttribute("data-vt") || "";
+    const input = document.getElementById("vt-lookup-input");
+    if (input) input.value = val;
+    runVtLookup(val);
+  });
+});
 
 // Process & Startup Guard
 async function refreshProcessesAndPersistence() {
@@ -956,6 +1162,7 @@ async function refreshLiveMemory() {
   } catch (e) {}
 
   await refreshLiveMemory();
+  await refreshVtStatus();
 
   try {
     await renderBrowserExtensionInstaller();

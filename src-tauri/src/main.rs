@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
-use threat_intel_and_net::{NetworkConnectionItem, ThreatFeedStatus};
+use threat_intel_and_net::{NetworkConnectionItem, ThreatFeedStatus, VtConfigStatus, VtScanReport};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPreferences {
@@ -272,6 +272,31 @@ fn get_network_connections() -> Vec<NetworkConnectionItem> {
 }
 
 #[tauri::command]
+fn get_virustotal_status() -> VtConfigStatus {
+    threat_intel_and_net::get_vt_config_status()
+}
+
+#[tauri::command]
+fn save_virustotal_config(
+    api_key: Option<String>,
+    auto_check_suspicious: bool,
+) -> Result<VtConfigStatus, String> {
+    threat_intel_and_net::update_vt_config(api_key, auto_check_suspicious)
+}
+
+#[tauri::command]
+fn clear_virustotal_key() -> Result<VtConfigStatus, String> {
+    threat_intel_and_net::clear_vt_api_key()
+}
+
+#[tauri::command]
+async fn virustotal_lookup(target: String) -> Result<VtScanReport, String> {
+    tauri::async_runtime::spawn_blocking(move || threat_intel_and_net::vt_check_target(&target))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn get_detected_browsers() -> Vec<DetectedBrowser> {
     extension_installer::detect_installed_browsers()
 }
@@ -338,10 +363,10 @@ fn get_live_memory_usage() -> MemoryTelemetry {
 
     #[cfg(not(target_os = "linux"))]
     {
-        use sysinfo::{Pid, ProcessesToUpdate, System};
+        use sysinfo::{Pid, System};
         let mut sys = System::new();
         let sys_pid = Pid::from_u32(pid);
-        sys.refresh_processes(ProcessesToUpdate::Some(&[sys_pid]), true);
+        sys.refresh_process(sys_pid);
         let bytes = sys.process(sys_pid).map(|p| p.memory()).unwrap_or(0);
         let rss_mb = ((bytes as f64 / (1024.0 * 1024.0)) * 10.0).round() / 10.0;
         MemoryTelemetry {
@@ -406,6 +431,10 @@ fn main() {
             get_feed_status,
             sync_threat_feeds,
             get_network_connections,
+            get_virustotal_status,
+            save_virustotal_config,
+            clear_virustotal_key,
+            virustotal_lookup,
             get_detected_browsers,
             install_browser_guard_extension,
             open_browser_extension_folder,

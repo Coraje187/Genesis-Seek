@@ -22,8 +22,9 @@
    - **Ransomware Canary Decoy Tripwires**: Arms hidden decoy files (`.genesis-seek-canary/`) and raises an immediate Critical alert if an unauthorized process modifies or encrypts them.
    - **Background Process Monitor**: Continuously audits running processes for volatile memory execution (`/dev/shm`, `/tmp`, `AppData\Local\Temp`) and masquerading system binaries.
 
-3. **Live Cloud Threat Intelligence & Network Socket Inspector ([`src-tauri/src/threat_intel_and_net.rs`](src-tauri/src/threat_intel_and_net.rs))**
+3. **Live Cloud Threat Intelligence, Optional VirusTotal v3 API & Network Socket Inspector ([`src-tauri/src/threat_intel_and_net.rs`](src-tauri/src/threat_intel_and_net.rs))**
    - **Live Abuse.ch Threat Feeds**: Downloads and caches real-time malicious hostnames from **Abuse.ch URLhaus** and recent malware SHA-256 hashes from **Abuse.ch MalwareBazaar**.
+   - **Optional VirusTotal v3 Multi-Engine Cloud Lookup (Windows & Linux)**: Supports an optional VirusTotal API key (saved locally in `~/.config/genesis-seek/vt_config.json` with `0600` permissions on Linux or `%APPDATA%\genesis-seek\vt_config.json` on Windows, or via `VIRUSTOTAL_API_KEY`) to check SHA-256 file hashes and domains across 70+ antivirus engines without uploading file contents.
    - **Active TCP Socket Guard**: Inspects `/proc/net/tcp` on Linux and `netstat -ano` on Windows to flag C2 ports (`4444`, `1337`, `31337`), Stratum mining pools (`3333`, `14444`), IRC botnets (`6667`), and Tor relays (`9050`).
 
 4. **Quarantine Vault with False-Positive Allowlisting ([`src-tauri/src/quarantine.rs`](src-tauri/src/quarantine.rs))**

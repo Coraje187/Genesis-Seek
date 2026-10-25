@@ -30,6 +30,8 @@ const EMBEDDED_BG_JS: &str = include_str!("../../browser-extension/background.js
 const EMBEDDED_CONTENT_JS: &str = include_str!("../../browser-extension/content_guard.js");
 const EMBEDDED_POPUP_HTML: &str = include_str!("../../browser-extension/popup.html");
 const EMBEDDED_POPUP_JS: &str = include_str!("../../browser-extension/popup.js");
+const EMBEDDED_THEME_INIT_JS: &str = include_str!("../../browser-extension/theme-init.js");
+const EMBEDDED_ICON_SVG: &str = include_str!("../../browser-extension/icon.svg");
 const EMBEDDED_RULES_JSON: &str = include_str!("../../browser-extension/rules.json");
 const EMBEDDED_ICON_16: &[u8] = include_bytes!("../../browser-extension/icons/icon-16.png");
 const EMBEDDED_ICON_32: &[u8] = include_bytes!("../../browser-extension/icons/icon-32.png");
@@ -44,6 +46,8 @@ fn materialize_embedded_extension(target_dir: &Path, is_firefox: bool) {
     let _ = fs::write(target_dir.join("content_guard.js"), EMBEDDED_CONTENT_JS);
     let _ = fs::write(target_dir.join("popup.html"), EMBEDDED_POPUP_HTML);
     let _ = fs::write(target_dir.join("popup.js"), EMBEDDED_POPUP_JS);
+    let _ = fs::write(target_dir.join("theme-init.js"), EMBEDDED_THEME_INIT_JS);
+    let _ = fs::write(target_dir.join("icon.svg"), EMBEDDED_ICON_SVG);
     let _ = fs::write(target_dir.join("rules.json"), EMBEDDED_RULES_JSON);
     let _ = fs::write(icons_dir.join("icon-16.png"), EMBEDDED_ICON_16);
     let _ = fs::write(icons_dir.join("icon-32.png"), EMBEDDED_ICON_32);

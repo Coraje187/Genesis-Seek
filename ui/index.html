@@ -189,6 +189,10 @@
           <strong id="sidebar-feed-ver" class="text-ok">v2026.10.16.01</strong>
         </div>
         <div class="telemetry-row">
+          <span>VirusTotal API</span>
+          <strong id="sidebar-vt-status" class="text-warn" style="cursor:pointer;" onclick="window.switchTab('network-intel')">Optional • Standby</strong>
+        </div>
+        <div class="telemetry-row">
           <span>Browser Bridge</span>
           <strong id="bridge-indicator" class="text-ok">127.0.0.1:49152</strong>
         </div>
@@ -536,6 +540,65 @@
           </div>
 
           <div id="feed-sources-list" class="preset-chips" style="margin-top:14px;"></div>
+        </div>
+
+        <div class="panel-card" id="virustotal-panel">
+          <div class="panel-header">
+            <div>
+              <h3>VirusTotal v3 Multi-Engine Cloud Lookup (Optional API Key)</h3>
+              <p class="muted small">
+                Query 70+ antivirus engines on VirusTotal by SHA-256 hash, local file path (hashed locally — your files are never uploaded), or domain/URL. Works on both Windows &amp; Linux.
+              </p>
+            </div>
+            <span id="vt-status-badge" class="sev-badge sev-Medium">OPTIONAL • NO KEY SET</span>
+          </div>
+
+          <div class="url-tester-bar" style="margin-top:10px;">
+            <input
+              type="password"
+              id="vt-api-key-input"
+              placeholder="Paste your free VirusTotal v3 API Key (saved locally in encrypted/restricted OS config or via VIRUSTOTAL_API_KEY)"
+            />
+            <button type="button" class="btn btn-primary" id="btn-save-vt-key">Save API Key</button>
+            <button type="button" class="btn btn-outline" id="btn-clear-vt-key">Clear Key</button>
+          </div>
+          <div class="muted small" id="vt-key-source-info" style="margin-top:6px;">
+            Key Status: Not configured (Genesis Seek local engines &amp; Abuse.ch feeds remain 100% active without a key).
+          </div>
+
+          <div class="shield-row" style="margin-top:12px;" onclick="var c=document.getElementById('toggle-vt-autocheck'); if(event.target!==c){c.checked=!c.checked; window.saveVtSettings && window.saveVtSettings(false);}">
+            <div>
+              <div class="shield-name">
+                Auto-Check High-Entropy / Suspicious Executables on VirusTotal During Scans
+              </div>
+              <div class="shield-desc">
+                Automatically verifies SHA-256 hashes of suspicious packed PE/ELF binaries against VirusTotal v3 during Quick &amp; Deep Threat Scans
+              </div>
+            </div>
+            <label class="switch" onclick="event.stopPropagation();">
+              <input type="checkbox" id="toggle-vt-autocheck" onchange="window.saveVtSettings && window.saveVtSettings(false);" />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div style="border-top:1px solid var(--border-subtle);margin-top:16px;padding-top:14px;">
+            <div style="font-weight:700;font-size:0.9rem;margin-bottom:8px;">On-Demand VirusTotal File / SHA-256 / Domain Lookup</div>
+            <div class="url-tester-bar">
+              <input
+                type="text"
+                id="vt-lookup-input"
+                placeholder="Enter a local file path (C:\... or /home/...), 64-char SHA-256 hash, or domain/URL"
+              />
+              <button type="button" class="btn btn-primary" id="btn-vt-lookup">Scan with VirusTotal</button>
+            </div>
+            <div class="preset-chips" style="margin-top:10px;">
+              <span class="muted small">Quick VirusTotal Test Samples:</span>
+              <button type="button" class="chip" data-vt="275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f">EICAR Test SHA-256</button>
+              <button type="button" class="chip" data-vt="ed01ebfbc9eb5bbea545af4d01bf5f1071661840480439c6e5babe8e080e41aa">WannaCry Ransomware SHA-256</button>
+              <button type="button" class="chip" data-vt="github.com">Clean Domain (github.com)</button>
+            </div>
+            <div id="vt-result-card" class="url-result-card hidden" style="margin-top:12px;"></div>
+          </div>
         </div>
 
         <div class="panel-card">

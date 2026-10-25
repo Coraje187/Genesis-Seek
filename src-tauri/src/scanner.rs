@@ -197,6 +197,11 @@ fn hash_and_sample(path: &Path) -> Option<(String, Vec<u8>)> {
     Some((hex::encode(hasher.finalize()), head))
 }
 
+/// Compute the full-file SHA-256 hash without uploading or retaining file contents.
+pub fn compute_file_sha256(path: &Path) -> Option<String> {
+    hash_and_sample(path).map(|(sha, _)| sha)
+}
+
 fn detection(
     path: &str,
     sha256: &str,
@@ -300,6 +305,31 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
             "Entropy & Packer Analyzer",
             format!("Packed executable binary with abnormally high Shannon entropy ({} bits/byte).", entropy),
         ));
+    }
+
+    // Layer 6: Optional VirusTotal v3 SHA-256 cloud verification for high-entropy binaries
+    // when the user has configured a VirusTotal API key and enabled automatic cloud hash checks.
+    if (is_pe || is_elf) && entropy > 7.15 && threat_intel_and_net::should_auto_check_vt() {
+        if let Ok(vt) = threat_intel_and_net::vt_check_target(&sha256_hex) {
+            if vt.verdict == "Malicious" || vt.verdict == "Suspicious" {
+                let sev = if vt.verdict == "Malicious" { "Critical" } else { "High" };
+                return Some(detection(
+                    &full_path,
+                    &sha256_hex,
+                    entropy,
+                    &format!("VirusTotal.{}", vt.threat_label.replace(' ', ".")),
+                    "Cloud.MultiEngine",
+                    sev,
+                    &format!("VirusTotal v3 ({}/{} engines)", vt.malicious + vt.suspicious, vt.total_engines),
+                    format!(
+                        "Flagged by {}/{} antivirus engines on VirusTotal ({}).",
+                        vt.malicious + vt.suspicious,
+                        vt.total_engines,
+                        vt.flagged_engines.into_iter().take(4).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
     }
 
     None
