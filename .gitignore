@@ -11,9 +11,9 @@ Thumbs.db
 .vscode/
 node_modules/
 dist/
-\
 
-*.zip
-*.tar.gz
+release_stage/
 release_assets/
 package_release.ps1
+*.zip
+*.tar.gz
