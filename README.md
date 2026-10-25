@@ -9,18 +9,19 @@
 
 ---
 
-## 📥 Downloads & Quick Installation
+## 📥 Downloads & Quick Installation (v0.2.0)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek.exe)
-* **Portable Archive**: [**genesis-seek-v0.1.0-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek-v0.1.0-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.2.0/genesis-seek.exe)
+* **Portable Archive**: [**genesis-seek-v0.2.0-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.2.0/genesis-seek-v0.2.0-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Linux Archive**: [**genesis-seek-v0.1.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.1.0/genesis-seek-v0.1.0-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.2.0-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.2.0/Genesis-Seek-0.2.0-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.2.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.2.0/genesis-seek-v0.2.0-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard (Mozilla Firefox)
 * **Official Signed Add-on**: [**Add to Firefox (Mozilla AMO)**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) *(1-Click Permanent Install)*

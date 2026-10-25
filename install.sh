@@ -6,7 +6,7 @@
 set -e
 
 REPO="Coraje187/Genesis-Seek"
-VERSION="v0.1.0"
+VERSION="v0.2.0"
 INSTALL_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
