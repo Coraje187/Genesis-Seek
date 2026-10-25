@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-windows:
-    name: Build Windows Executable & Installer
+    name: Build Windows Executable, Installer & Browser Guard
     runs-on: windows-latest
     permissions:
       contents: write
@@ -31,22 +31,55 @@ jobs:
           cargo build --release
           npx --yes @tauri-apps/cli@^2.0.0 build || true
 
-      - name: Package Standalone Windows ZIP
+      - name: Package Windows ZIP & Browser Guard Extensions
         shell: pwsh
         run: |
           $ver = '${{ github.ref_name }}'
           if (-not $ver) { $ver = 'v0.3.0' }
+          
+          # 1. Package Browser Guard ZIP (Chrome, Edge, Brave) and XPI (Firefox)
+          $extZip = "genesis-seek-browser-guard-$ver.zip"
+          $extXpi = "genesis-seek-browser-guard-$ver.xpi"
+          Compress-Archive -Path browser-extension/* -DestinationPath $extZip -Force
+          Copy-Item $extZip $extXpi
+          
+          # 2. Package Complete Windows ZIP (exe + rules + extension + README)
           $zipName = "genesis-seek-$ver-windows-x86_64.zip"
-          Compress-Archive -Path src-tauri/target/release/genesis-seek.exe -DestinationPath $zipName -Force
+          $winStaging = "win_staging"
+          New-Item -ItemType Directory -Path $winStaging | Out-Null
+          Copy-Item src-tauri/target/release/genesis-seek.exe $winStaging/genesis-seek.exe
+          if (Test-Path rules) { Copy-Item -Recurse rules $winStaging/rules }
+          if (Test-Path browser-extension) { Copy-Item -Recurse browser-extension $winStaging/browser-extension }
+          if (Test-Path README.md) { Copy-Item README.md $winStaging/README.md }
+          Compress-Archive -Path "$winStaging/*" -DestinationPath $zipName -Force
+          Remove-Item -Recurse -Force $winStaging
+          
+          # 3. Package Linux Installer bundle
+          $linZip = "genesis-seek-$ver-linux-installer.zip"
+          $linStaging = "lin_staging"
+          New-Item -ItemType Directory -Path $linStaging | Out-Null
+          if (Test-Path install.sh) { Copy-Item install.sh $linStaging/install.sh }
+          if (Test-Path rules) { Copy-Item -Recurse rules $linStaging/rules }
+          if (Test-Path browser-extension) { Copy-Item -Recurse browser-extension $linStaging/browser-extension }
+          if (Test-Path README.md) { Copy-Item README.md $linStaging/README.md }
+          Compress-Archive -Path "$linStaging/*" -DestinationPath $linZip -Force
+          Remove-Item -Recurse -Force $linStaging
+          
           echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+          echo "EXT_ZIP=$extZip" >> $env:GITHUB_ENV
+          echo "EXT_XPI=$extXpi" >> $env:GITHUB_ENV
+          echo "LIN_ZIP=$linZip" >> $env:GITHUB_ENV
 
-      - name: Upload Windows Assets to GitHub Release
+      - name: Upload Windows & Extension Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ github.ref_name || 'v0.3.0' }}
           files: |
             ${{ env.ZIP_NAME }}
+            ${{ env.EXT_ZIP }}
+            ${{ env.EXT_XPI }}
+            ${{ env.LIN_ZIP }}
             src-tauri/target/release/genesis-seek.exe
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi
