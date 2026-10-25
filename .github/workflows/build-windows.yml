@@ -36,14 +36,65 @@ jobs:
         run: |
           $ver = '${{ github.ref_name }}'
           if (-not $ver) { $ver = 'v0.3.0' }
-          
-          # 1. Package Browser Guard ZIP (Chrome, Edge, Brave) and XPI (Firefox)
-          $extZip = "genesis-seek-browser-guard-$ver.zip"
-          $extXpi = "genesis-seek-browser-guard-$ver.xpi"
-          Compress-Archive -Path browser-extension/* -DestinationPath $extZip -Force
-          Copy-Item $extZip $extXpi
-          
-          # 2. Package Complete Windows ZIP (exe + rules + extension + README)
+
+          # 1. Package Chrome, Microsoft Edge & Brave Extension (service_worker Manifest V3)
+          $chromeStage = "chrome_edge_stage"
+          New-Item -ItemType Directory -Path $chromeStage | Out-Null
+          Copy-Item -Recurse browser-extension/* $chromeStage
+          $chromeManifest = @"
+          {
+            "manifest_version": 3,
+            "name": "Genesis Seek Browser Guard",
+            "version": "0.3.0",
+            "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
+            "permissions": ["tabs", "storage", "declarativeNetRequest"],
+            "host_permissions": ["<all_urls>", "http://127.0.0.1:49152/*"],
+            "background": { "service_worker": "background.js" },
+            "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content_guard.js"], "run_at": "document_idle" }],
+            "declarative_net_request": { "rule_resources": [{ "id": "genesis_seek_blocklist", "enabled": true, "path": "rules.json" }] },
+            "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+            "action": { "default_title": "Genesis Seek Browser Guard", "default_popup": "popup.html", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } }
+          }
+"@
+          Set-Content -Path "$chromeStage/manifest.json" -Value $chromeManifest -Encoding UTF8
+          $chromeZip = "Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-$ver.zip"
+          Compress-Archive -Path "$chromeStage/*" -DestinationPath $chromeZip -Force
+          Remove-Item -Recurse -Force $chromeStage
+
+          # 2. Package Firefox Extension (scripts + gecko Manifest V3)
+          $ffStage = "firefox_stage"
+          New-Item -ItemType Directory -Path $ffStage | Out-Null
+          Copy-Item -Recurse browser-extension/* $ffStage
+          $ffManifest = @"
+          {
+            "manifest_version": 3,
+            "name": "Genesis Seek Browser Guard",
+            "version": "0.3.0",
+            "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
+            "permissions": ["tabs", "storage", "declarativeNetRequest"],
+            "host_permissions": ["<all_urls>", "http://127.0.0.1:49152/*"],
+            "background": { "scripts": ["background.js"] },
+            "browser_specific_settings": {
+              "gecko": {
+                "id": "browser-guard@genesisseek.io",
+                "strict_min_version": "109.0",
+                "data_collection_permissions": { "required": ["none"] }
+              }
+            },
+            "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content_guard.js"], "run_at": "document_idle" }],
+            "declarative_net_request": { "rule_resources": [{ "id": "genesis_seek_blocklist", "enabled": true, "path": "rules.json" }] },
+            "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+            "action": { "default_title": "Genesis Seek Browser Guard", "default_popup": "popup.html", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } }
+          }
+"@
+          Set-Content -Path "$ffStage/manifest.json" -Value $ffManifest -Encoding UTF8
+          $ffZip = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.zip"
+          $ffXpi = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.xpi"
+          Compress-Archive -Path "$ffStage/*" -DestinationPath $ffZip -Force
+          Copy-Item $ffZip $ffXpi
+          Remove-Item -Recurse -Force $ffStage
+
+          # 3. Package Complete Windows ZIP (exe + rules + extension + README)
           $zipName = "genesis-seek-$ver-windows-x86_64.zip"
           $winStaging = "win_staging"
           New-Item -ItemType Directory -Path $winStaging | Out-Null
@@ -53,8 +104,8 @@ jobs:
           if (Test-Path README.md) { Copy-Item README.md $winStaging/README.md }
           Compress-Archive -Path "$winStaging/*" -DestinationPath $zipName -Force
           Remove-Item -Recurse -Force $winStaging
-          
-          # 3. Package Linux Installer bundle
+
+          # 4. Package Linux Installer bundle
           $linZip = "genesis-seek-$ver-linux-installer.zip"
           $linStaging = "lin_staging"
           New-Item -ItemType Directory -Path $linStaging | Out-Null
@@ -64,10 +115,11 @@ jobs:
           if (Test-Path README.md) { Copy-Item README.md $linStaging/README.md }
           Compress-Archive -Path "$linStaging/*" -DestinationPath $linZip -Force
           Remove-Item -Recurse -Force $linStaging
-          
+
           echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
-          echo "EXT_ZIP=$extZip" >> $env:GITHUB_ENV
-          echo "EXT_XPI=$extXpi" >> $env:GITHUB_ENV
+          echo "CHROME_ZIP=$chromeZip" >> $env:GITHUB_ENV
+          echo "FF_ZIP=$ffZip" >> $env:GITHUB_ENV
+          echo "FF_XPI=$ffXpi" >> $env:GITHUB_ENV
           echo "LIN_ZIP=$linZip" >> $env:GITHUB_ENV
 
       - name: Upload Windows & Extension Assets to GitHub Release
@@ -75,10 +127,35 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ github.ref_name || 'v0.3.0' }}
+          body: |
+            ## 🛡️ Genesis Seek Enterprise v0.3.0 — Release Assets Guide
+
+            ### 🌐 Browser Guard Extensions:
+            * **Google Chrome, Microsoft Edge & Brave:**
+              Download [`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip) (Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked").
+            * **Mozilla Firefox:**
+              Download [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi) (or install 1-click from [Mozilla AMO](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)).
+              Source zip: [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.zip).
+
+            ### 🪟 Windows Desktop Application:
+            * **Standalone Executable:** [`genesis-seek.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek.exe)
+            * **NSIS Setup Installer:** [`Genesis.Seek_0.3.0_x64-setup.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis.Seek_0.3.0_x64-setup.exe)
+            * **MSI Enterprise Package:** [`Genesis.Seek_0.3.0_x64_en-US.msi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis.Seek_0.3.0_x64_en-US.msi)
+            * **Complete Portable Archive:** [`genesis-seek-v0.3.0-windows-x86_64.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek-v0.3.0-windows-x86_64.zip)
+
+            ### 🐧 Linux Desktop Application:
+            * **Standalone AppImage:** [`Genesis-Seek-0.3.0-x86_64.AppImage`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-0.3.0-x86_64.AppImage)
+            * **Debian / Ubuntu Package:** [`Genesis.Seek_0.3.0_amd64.deb`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis.Seek_0.3.0_amd64.deb)
+            * **Portable Tarball:** [`genesis-seek-v0.3.0-linux-x86_64.tar.gz`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek-v0.3.0-linux-x86_64.tar.gz)
+            * **1-Line Terminal Installer:** `curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash`
+
+            ---
+            *© 2026 Genesis Grid Labs. Free, Secure, Plug-and-Play Local AI & Security Grid.*
           files: |
             ${{ env.ZIP_NAME }}
-            ${{ env.EXT_ZIP }}
-            ${{ env.EXT_XPI }}
+            ${{ env.CHROME_ZIP }}
+            ${{ env.FF_ZIP }}
+            ${{ env.FF_XPI }}
             ${{ env.LIN_ZIP }}
             src-tauri/target/release/genesis-seek.exe
             src-tauri/target/release/bundle/nsis/*.exe

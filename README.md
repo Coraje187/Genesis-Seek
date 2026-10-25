@@ -23,8 +23,12 @@
 * **Standalone AppImage**: [**Genesis-Seek-0.3.0-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-0.3.0-x86_64.AppImage)
 * **Linux Archive**: [**genesis-seek-v0.3.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek-v0.3.0-linux-x86_64.tar.gz)
 
-### 🌐 Browser Guard (Mozilla Firefox)
-* **Official Signed Add-on**: [**Add to Firefox (Mozilla AMO)**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) *(1-Click Permanent Install)*
+### 🌐 Browser Guard Extensions
+* **Google Chrome, Microsoft Edge & Brave**:
+  * [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip) *(Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked")*
+* **Mozilla Firefox**:
+  * [**Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi) *(Direct Add-on Package)*
+  * [**Add to Firefox via Mozilla Add-ons (AMO)**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) *(1-Click Official Store Install)*
 
 ---
 
