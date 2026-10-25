@@ -35,7 +35,7 @@ jobs:
         shell: pwsh
         run: |
           $ver = '${{ github.ref_name }}'
-          if (-not $ver) { $ver = 'v0.2.0' }
+          if (-not $ver) { $ver = 'v0.3.0' }
           $zipName = "genesis-seek-$ver-windows-x86_64.zip"
           Compress-Archive -Path src-tauri/target/release/genesis-seek.exe -DestinationPath $zipName -Force
           echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
@@ -44,7 +44,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.2.0' }}
+          tag_name: ${{ github.ref_name || 'v0.3.0' }}
           files: |
             ${{ env.ZIP_NAME }}
             src-tauri/target/release/genesis-seek.exe
@@ -87,28 +87,25 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ github.ref_name }}"
-          if [ -z "$VER" ]; then VER="v0.2.0"; fi
+          if [ -z "$VER" ]; then VER="v0.3.0"; fi
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
           chmod +x ./genesis-seek-linux-x86_64
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.2.0-x86_64.AppImage
-            chmod +x ./Genesis-Seek-0.2.0-x86_64.AppImage
+            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.3.0-x86_64.AppImage || true
           fi
-          gh release delete-asset "$VER" "Genesis-Seek-0.1.0-x86_64.AppImage" --yes || true
-          gh release delete-asset "$VER" "genesis-seek-v0.1.0-linux-x86_64.tar.gz" --yes || true
           echo "TAR_NAME=$TAR_NAME" >> $GITHUB_ENV
 
       - name: Upload Linux Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.2.0' }}
+          tag_name: ${{ github.ref_name || 'v0.3.0' }}
           files: |
             ${{ env.TAR_NAME }}
             genesis-seek-linux-x86_64
-            Genesis-Seek-0.2.0-x86_64.AppImage
+            Genesis-Seek-0.3.0-x86_64.AppImage
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
         env:
