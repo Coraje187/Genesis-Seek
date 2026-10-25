@@ -522,9 +522,29 @@ pub fn spawn_realtime_file_watcher() {
         }
         watch_dirs.push(std::env::temp_dir());
 
+        #[cfg(target_os = "windows")]
+        {
+            for letter in b'D'..=b'Z' {
+                let drive_str = format!("{}:\\", letter as char);
+                let p = PathBuf::from(&drive_str);
+                if p.exists() {
+                    watch_dirs.push(p);
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            for mount_root in &["/media", "/run/media", "/mnt"] {
+                let p = PathBuf::from(mount_root);
+                if p.exists() {
+                    watch_dirs.push(p);
+                }
+            }
+        }
+
         let mut watched = Vec::new();
         for dir in &watch_dirs {
-            if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
+            if dir.exists() && watcher.watch(dir, RecursiveMode::Recursive).is_ok() {
                 watched.push(dir.to_string_lossy().to_string());
             }
         }
@@ -556,13 +576,29 @@ pub fn spawn_realtime_file_watcher() {
                 let Some(det) = scanner::scan_single_file(&path) else { continue };
                 recently_handled.insert(path.clone(), Instant::now());
 
-                let action = if shields.auto_quarantine_realtime && is_auto_quarantine_severity(&det.severity) {
-                    match quarantine::quarantine_file(&det.file_path, &det.threat_name, &det.severity, &det.sha256) {
-                        Ok(_) => "Auto-Quarantined (.gvault)".to_string(),
-                        Err(e) => format!("Detected (quarantine failed: {})", e),
-                    }
-                } else {
-                    "Detected — review in Threat Scanner".to_string()
+                if quarantine::is_allowlisted(&det.sha256) {
+                    continue;
+                }
+
+                let is_riskware = det.threat_name.contains("RiskWare") || det.category.contains("RiskWare");
+
+                // RiskWare / Game Cracks / Non-destructive items: always prompt with sleek interactive alert!
+                if is_riskware || !shields.auto_quarantine_realtime || !is_auto_quarantine_severity(&det.severity) {
+                    crate::threat_alert::trigger_threat_alert(&det);
+                    log_security_event(
+                        "File Guard",
+                        &det.severity,
+                        &format!("Real-Time Notice: {}", det.threat_name),
+                        &det.file_path,
+                        "Interactive Alert Triggered (Quarantine or Allow)",
+                    );
+                    crate::tray_indicator::notify_tray_updated();
+                    continue;
+                }
+
+                let action = match quarantine::quarantine_file(&det.file_path, &det.threat_name, &det.severity, &det.sha256) {
+                    Ok(_) => "Auto-Quarantined (.gvault)".to_string(),
+                    Err(e) => format!("Detected (quarantine failed: {})", e),
                 };
 
                 log_security_event(
@@ -572,6 +608,7 @@ pub fn spawn_realtime_file_watcher() {
                     &det.file_path,
                     &action,
                 );
+                crate::threat_alert::trigger_threat_alert(&det);
                 crate::tray_indicator::notify_tray_updated();
             }
         }

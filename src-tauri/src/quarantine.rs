@@ -96,7 +96,7 @@ pub fn is_allowlisted(sha256: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn add_to_allowlist(sha256: &str) {
+pub fn add_to_allowlist(sha256: &str) {
     if let Ok(mut set) = ALLOWLIST.lock() {
         set.insert(sha256.to_string());
         if let Ok(json) = serde_json::to_string_pretty(&*set) {

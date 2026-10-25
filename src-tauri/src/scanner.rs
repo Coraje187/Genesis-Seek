@@ -292,6 +292,25 @@ fn ensure_default_yara_files(rules_dir: &Path) {
     if !core_file.exists() {
         let _ = fs::write(core_file, DEFAULT_CORE_YARA_FILE.trim());
     }
+
+    // Copy bundled .yar rule files from relative rules folders
+    for rel in &["rules", "../rules", "../../rules"] {
+        let rel_p = PathBuf::from(rel);
+        if rel_p.is_dir() {
+            if let Ok(entries) = fs::read_dir(rel_p) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if ext.eq_ignore_ascii_case("yar") || ext.eq_ignore_ascii_case("yara") {
+                        let dest = rules_dir.join(entry.file_name());
+                        if !dest.exists() {
+                            let _ = fs::copy(&p, &dest);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Parse `.yar` / `.yara` rule files from `rules/` into `CompiledYaraRule` patterns.
@@ -791,10 +810,29 @@ fn get_scan_targets(scan_type: &str) -> Vec<PathBuf> {
         if let Some(data_local) = dirs::data_local_dir() {
             targets.push(data_local);
         }
+        #[cfg(target_os = "windows")]
+        {
+            if scan_type == "full" {
+                for letter in b'D'..=b'Z' {
+                    let p = PathBuf::from(format!("{}:\\", letter as char));
+                    if p.exists() {
+                        targets.push(p);
+                    }
+                }
+            }
+        }
         #[cfg(target_os = "linux")]
         {
             targets.push(PathBuf::from("/dev/shm"));
             targets.push(PathBuf::from("/var/tmp"));
+            if scan_type == "full" {
+                for mount_root in &["/media", "/run/media", "/mnt"] {
+                    let p = PathBuf::from(mount_root);
+                    if p.exists() {
+                        targets.push(p);
+                    }
+                }
+            }
         }
     }
 

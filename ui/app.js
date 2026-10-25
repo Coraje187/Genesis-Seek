@@ -1,4 +1,4 @@
-﻿// Genesis Seek — Frontend Controller (Tauri Native IPC + Persistent Theme Memory + Browser Fallback)
+// Genesis Seek — Frontend Controller (Tauri Native IPC + Persistent Theme Memory + Browser Fallback)
 
 const THEME_STORAGE_KEY = "genesis_seek_theme";
 
@@ -1265,6 +1265,15 @@ async function refreshLiveMemory() {
   try {
     await refreshQuarantine();
   } catch (e) {}
+
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    window.__TAURI__.event.listen("threat-alert-data", async () => {
+      try {
+        await refreshEvents();
+        await refreshQuarantine();
+      } catch (e) {}
+    });
+  }
 
   // Keep UI synchronized with Desktop Bar tray menu and live RAM usage
   setInterval(async () => {

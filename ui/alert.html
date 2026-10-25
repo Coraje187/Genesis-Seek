@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Genesis Seek Alert</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: transparent;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      padding: 10px;
+    }
+    .alert-card {
+      width: 100%;
+      height: 100%;
+      background: rgba(13, 17, 23, 0.94);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: 16px;
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.75), 0 0 24px rgba(16, 185, 129, 0.12);
+      display: flex;
+      flex-direction: column;
+      padding: 14px 16px;
+      color: #e6edf3;
+      position: relative;
+      animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      padding-bottom: 8px;
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #10b981, #00e5ff);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+    .brand-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: #38bdf8;
+    }
+    .brand-subtitle {
+      font-size: 10px;
+      color: #8b949e;
+      margin-left: 4px;
+    }
+    .btn-close {
+      background: none;
+      border: none;
+      color: #8b949e;
+      cursor: pointer;
+      font-size: 15px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn-close:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #fff;
+    }
+    .content-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow: hidden;
+    }
+    .threat-headline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .threat-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f1f5f9;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .category-badge {
+      font-size: 9.5px;
+      font-weight: 600;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(245, 158, 11, 0.18);
+      color: #fbbf24;
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      white-space: nowrap;
+    }
+    .path-box {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .desc-text {
+      font-size: 11px;
+      color: #cbd5e1;
+      line-height: 1.35;
+    }
+    .actions-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .btn-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      outline: none;
+    }
+    .btn-allow {
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.5);
+      color: #34d399;
+    }
+    .btn-allow:hover {
+      background: rgba(16, 185, 129, 0.28);
+      border-color: #10b981;
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.3);
+      color: #fff;
+    }
+    .btn-quarantine {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+    }
+    .btn-quarantine:hover {
+      background: rgba(239, 68, 68, 0.25);
+      border-color: #ef4444;
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.3);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="alert-card">
+    <div class="card-header">
+      <div class="brand-wrap">
+        <div class="brand-icon">🛡️</div>
+        <div>
+          <span class="brand-title">Genesis Seek</span>
+          <span class="brand-subtitle">• Threat Notice</span>
+        </div>
+      </div>
+      <button class="btn-close" id="btnClose" title="Dismiss Alert">✕</button>
+    </div>
+
+    <div class="content-body">
+      <div class="threat-headline">
+        <span class="threat-name" id="threatName">RiskWare.Crack.FitGirlRepack</span>
+        <span class="category-badge" id="threatBadge">RiskWare / Crack</span>
+      </div>
+      <div class="path-box" id="filePath" title="File location">I:\DRIVECLUB [FitGirl Repack]\setup.exe</div>
+      <p class="desc-text" id="threatDesc">
+        DRM bypass or game repack signatures detected. If you trust this installer and know it is safe, choose <strong>Allow & Leave</strong>.
+      </p>
+    </div>
+
+    <div class="actions-row">
+      <button class="btn-action btn-allow" id="btnAllow">
+        ✅ Allow & Leave (Trust)
+      </button>
+      <button class="btn-action btn-quarantine" id="btnQuarantine">
+        🛡️ Quarantine
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let currentPayload = {
+      file_path: "",
+      threat_name: "",
+      severity: "Medium",
+      category: "RiskWare / Game Crack",
+      sha256: "",
+      description: ""
+    };
+
+    function updateUI(data) {
+      if (!data) return;
+      currentPayload = data;
+      document.getElementById('threatName').textContent = data.threat_name || 'Detected Item';
+      document.getElementById('threatBadge').textContent = data.category || data.severity || 'Notice';
+      document.getElementById('filePath').textContent = data.file_path || '(path unavailable)';
+      document.getElementById('filePath').title = data.file_path || '';
+      
+      if (data.description) {
+        document.getElementById('threatDesc').textContent = data.description;
+      }
+    }
+
+    const tauri = window.__TAURI__;
+
+    // Listen for real-time alert events
+    if (tauri && tauri.event) {
+      tauri.event.listen('threat-alert-data', (event) => {
+        updateUI(event.payload);
+      });
+    }
+
+    // Also poll pending alert on window launch
+    window.addEventListener('DOMContentLoaded', async () => {
+      if (tauri && tauri.core) {
+        try {
+          const pending = await tauri.core.invoke('get_pending_threat_alert');
+          if (pending) updateUI(pending);
+        } catch (e) {
+          console.error("Failed to fetch pending alert", e);
+        }
+      }
+    });
+
+    document.getElementById('btnAllow').addEventListener('click', async () => {
+      if (tauri && tauri.core && currentPayload.file_path) {
+        try {
+          await tauri.core.invoke('allowlist_and_trust_threat', {
+            filePath: currentPayload.file_path,
+            sha256: currentPayload.sha256 || ""
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        window.close();
+      }
+    });
+
+    document.getElementById('btnQuarantine').addEventListener('click', async () => {
+      if (tauri && tauri.core && currentPayload.file_path) {
+        try {
+          await tauri.core.invoke('quarantine_threat_file', {
+            filePath: currentPayload.file_path,
+            threatName: currentPayload.threat_name,
+            severity: currentPayload.severity,
+            sha256: currentPayload.sha256 || ""
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        window.close();
+      }
+    });
+
+    document.getElementById('btnClose').addEventListener('click', async () => {
+      if (tauri && tauri.core) {
+        try {
+          await tauri.core.invoke('dismiss_threat_alert');
+        } catch (e) {
+          window.close();
+        }
+      } else {
+        window.close();
+      }
+    });
+  </script>
+</body>
+</html>

@@ -5,6 +5,7 @@ mod process_guard;
 mod quarantine;
 mod realtime_shield;
 mod scanner;
+mod threat_alert;
 mod threat_intel_and_net;
 mod tray_indicator;
 
@@ -443,6 +444,7 @@ fn main() {
     tauri::Builder::default()
         .setup(|app| {
             tray_indicator::register_desktop_bar_indicator(app.handle().clone());
+            threat_alert::set_alert_app_handle(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -482,6 +484,10 @@ fn main() {
             open_browser_extension_folder,
             minimize_to_bar,
             get_live_memory_usage,
+            threat_alert::get_pending_threat_alert,
+            threat_alert::allowlist_and_trust_threat,
+            threat_alert::quarantine_threat_file,
+            threat_alert::dismiss_threat_alert,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Genesis Seek application");
