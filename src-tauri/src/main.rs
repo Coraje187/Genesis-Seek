@@ -445,6 +445,12 @@ fn main() {
             tray_indicator::register_desktop_bar_indicator(app.handle().clone());
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_user_preferences,
             save_user_theme,
