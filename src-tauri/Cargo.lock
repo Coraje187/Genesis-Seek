@@ -1184,12 +1184,9 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "dirs 5.0.1",
- "gio",
- "glib",
  "hex",
  "libc",
  "lru",
- "nix",
  "notify",
  "once_cell",
  "rand 0.8.8",
@@ -2199,18 +2196,6 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
-
-[[package]]
-name = "nix"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
-dependencies = [
- "bitflags 2.13.2",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
 
 [[package]]
 name = "notify"
