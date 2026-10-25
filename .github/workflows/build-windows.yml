@@ -79,6 +79,7 @@ jobs:
   build-linux:
     name: Build Linux Binary, DEB & Tarball
     runs-on: ubuntu-22.04
+    needs: build-windows
     permissions:
       contents: write
 
