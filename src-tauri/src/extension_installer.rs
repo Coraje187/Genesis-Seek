@@ -527,83 +527,34 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
     }
 
     // 2. Mozilla Firefox:
-    //    - Try instant Marionette auto-install if port 2828 is open
-    //    - Open `http://127.0.0.1:49152/install-firefox` in Firefox (unlike `about:` URLs which Firefox blocks from CLI when already running,
-    //      `http://127.0.0.1:49152/install-firefox` always opens a new tab in the running Firefox window with 1-click copy buttons!)
-    if is_firefox && target.installed && !target.binary_path.is_empty() {
-        let staged_ff = setup_firefox_permanent_autoload();
-        // Ensure no unsigned .xpi sits in Downloads/Genesis-Seek-Browser-Guard to prevent the `about:addons` "has not been verified" error
-        let _ = fs::remove_file(Path::new(&staged_ff).join("genesis-seek-browser-guard.xpi"));
+    //    Open official signed Mozilla Add-ons (AMO) store page directly!
+    //    User clicks "Add to Firefox" in the opened tab and it's permanently installed and auto-updating.
+    if is_firefox {
+        let amo_url = "https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/";
 
-        if try_firefox_marionette_install(&staged_ff).is_ok() {
-            realtime_shield::log_security_event(
-                "Browser Guard",
-                "Info",
-                "Auto-Installed Browser Guard into Mozilla Firefox (Permanent Startup Enabled)",
-                &staged_ff,
-                "Extension Active",
-            );
-            return Ok(ExtensionInstallResult {
-                browser_name: target.name,
-                success: true,
-                extension_path: staged_ff,
-                method_used: "Firefox Automatic Startup Loader".to_string(),
-                message: "Genesis Seek Browser Guard is active in Firefox AND configured to auto-load automatically every time you open Firefox!".to_string(),
-            });
+        if target.installed && !target.binary_path.is_empty() {
+            let _ = Command::new(&target.binary_path).arg(amo_url).spawn();
+        } else {
+            #[cfg(target_os = "windows")]
+            let _ = Command::new("cmd").args(["/c", "start", amo_url]).spawn();
+            #[cfg(not(target_os = "windows"))]
+            let _ = Command::new("xdg-open").arg(amo_url).spawn();
         }
-
-        // Open the local interactive installer tab in Firefox (`http://127.0.0.1:49152/install-firefox`)
-        let _ = Command::new(&target.binary_path)
-            .arg("--marionette")
-            .arg("http://127.0.0.1:49152/install-firefox")
-            .spawn();
-
-        for _ in 0..6 {
-            thread::sleep(Duration::from_millis(300));
-            if try_firefox_marionette_install(&staged_ff).is_ok() {
-                realtime_shield::log_security_event(
-                    "Browser Guard",
-                    "Info",
-                    "Auto-Installed Browser Guard into Mozilla Firefox (Permanent Startup Enabled)",
-                    &staged_ff,
-                    "Extension Active",
-                );
-                return Ok(ExtensionInstallResult {
-                    browser_name: target.name,
-                    success: true,
-                    extension_path: staged_ff,
-                    method_used: "Firefox Automatic Startup Loader".to_string(),
-                    message: "Genesis Seek Browser Guard was automatically loaded into Mozilla Firefox and configured to auto-load on every future Firefox launch!".to_string(),
-                });
-            }
-        }
-
-        let manifest_file = Path::new(&staged_ff)
-            .join("manifest.json")
-            .to_string_lossy()
-            .to_string();
 
         realtime_shield::log_security_event(
             "Browser Guard",
             "Info",
-            "Configured Permanent Firefox Auto-Loader + Opened Installer Tab",
-            &manifest_file,
-            "Auto-Loader Configured",
+            "Opened Official Mozilla Add-on Page",
+            amo_url,
+            "Awaiting 1-Click Install",
         );
 
         return Ok(ExtensionInstallResult {
-            browser_name: target.name,
+            browser_name: "Mozilla Firefox".to_string(),
             success: true,
-            extension_path: staged_ff.clone(),
-            method_used: "Permanent Auto-Loader + One-Time Tab".to_string(),
-            message: format!(
-                "Automatic Startup Configured! From the next time you launch Firefox onward, Genesis Seek will load the extension automatically.\n\n\
-                 For your currently open Firefox session (one-time only):\n\
-                 1. In Firefox's top address bar, paste:  about:debugging#/runtime/this-firefox\n\
-                 2. Click 'Load Temporary Add-on...'\n\
-                 3. Select manifest.json inside Downloads/Genesis-Seek-Browser-Guard:\n   {}",
-                manifest_file
-            ),
+            extension_path: amo_url.to_string(),
+            method_used: "Official Mozilla Add-ons (1-Click)".to_string(),
+            message: "Official Mozilla Add-on page opened! Click 'Add to Firefox' in the opened tab to permanently enable Genesis Seek Browser Guard.".to_string(),
         });
     }
 

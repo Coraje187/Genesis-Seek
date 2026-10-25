@@ -859,40 +859,46 @@ async function renderBrowserExtensionInstaller() {
 
 window.installForBrowser = async function (browserId) {
   const feedback = document.getElementById("ext-install-feedback");
-  feedback.classList.remove("hidden");
-  feedback.innerHTML = `<span class="muted">Installing & staging Genesis Seek Browser Guard for ${browserId.toUpperCase()}...</span>`;
+  if (feedback) {
+    feedback.classList.remove("hidden");
+    feedback.innerHTML = `<span class="muted">Launching installer for ${browserId.toUpperCase()}...</span>`;
+  }
+
+  // Hide reminder banner once user initiates install
+  const banner = document.getElementById("browser-extension-reminder-banner");
+  if (banner) {
+    banner.style.display = "none";
+    localStorage.setItem("gs_ext_banner_dismissed", "true");
+  }
 
   try {
     const res = await invokeBackend("install_browser_guard_extension", { browserId });
-    const targetClip =
-      browserId === "firefox"
-        ? `${res.extension_path}/manifest.json`
-        : res.extension_path;
-    if (navigator.clipboard && targetClip) {
-      await navigator.clipboard.writeText(targetClip).catch(() => {});
-    }
 
     const tipHtml =
       browserId === "firefox"
-        ? `<strong>Firefox Quick Load (Copied to Clipboard):</strong> In the Firefox <code>about:debugging#/runtime/this-firefox</code> tab that just opened, click <strong>Load Temporary Add-on...</strong> and select <code>${res.extension_path}/manifest.json</code>.`
-        : `<strong>Chromium Quick Load (Copied to Clipboard):</strong> Open <code>chrome://extensions</code>, enable <em>Developer mode</em>, click <strong>Load unpacked</strong>, and select <code>${res.extension_path}</code>.`;
+        ? `<strong>Official Mozilla Add-on:</strong> In the Firefox tab that just opened, simply click <strong>Add to Firefox</strong> to permanently enable and auto-update Genesis Seek Browser Guard.`
+        : `<strong>Microsoft Edge & Chromium:</strong> A ready-to-upload package (<code>genesis-seek-edge.zip</code>) is prepared in your Downloads folder for the Microsoft Edge Add-ons store (Free).`;
 
-    feedback.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <span class="sev-badge sev-Safe">EXTENSION READY</span>
-          <strong style="margin-left:8px;">${res.browser_name}</strong>
+    if (feedback) {
+      feedback.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <span class="sev-badge sev-Safe">EXTENSION READY</span>
+            <strong style="margin-left:8px;">${res.browser_name}</strong>
+          </div>
+          <span class="pill-tag">${res.method_used}</span>
         </div>
-        <span class="pill-tag">${res.method_used}</span>
-      </div>
-      <p class="small" style="margin-top:10px;white-space:pre-line;">${res.message}</p>
-      <p class="muted small" style="margin-top:8px;">
-        ${tipHtml}
-      </p>
-    `;
+        <p class="small" style="margin-top:10px;white-space:pre-line;">${res.message}</p>
+        <p class="muted small" style="margin-top:8px;">
+          ${tipHtml}
+        </p>
+      `;
+    }
     await refreshEvents();
   } catch (err) {
-    feedback.innerHTML = `<span class="sev-badge sev-Critical">Install Error</span> <span class="small">${err}</span>`;
+    if (feedback) {
+      feedback.innerHTML = `<span class="sev-badge sev-Critical">Install Error</span> <span class="small">${err}</span>`;
+    }
   }
 };
 
@@ -953,6 +959,14 @@ async function refreshLiveMemory() {
 
   try {
     await renderBrowserExtensionInstaller();
+  } catch (e) {}
+
+  // Check and display Browser Extension Reminder Banner
+  try {
+    const banner = document.getElementById("browser-extension-reminder-banner");
+    if (banner && localStorage.getItem("gs_ext_banner_dismissed") !== "true") {
+      banner.style.display = "flex";
+    }
   } catch (e) {}
 
   try {
