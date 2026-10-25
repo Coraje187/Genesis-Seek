@@ -81,7 +81,12 @@ async function invokeBackend(cmd, args = {}) {
     try {
       return await window.__TAURI__.core.invoke(cmd, args);
     } catch (err) {
-      if (cmd === "virustotal_lookup" || cmd === "save_virustotal_config") {
+      if (
+        cmd === "virustotal_lookup" ||
+        cmd === "save_virustotal_config" ||
+        cmd === "check_app_update" ||
+        cmd === "install_app_update"
+      ) {
         throw err;
       }
       console.warn(`Tauri IPC error on ${cmd}, using fallback:`, err);
@@ -539,6 +544,59 @@ const minBarBtn = document.getElementById("btn-minimize-bar");
 if (minBarBtn) {
   minBarBtn.addEventListener("click", async () => {
     await invokeBackend("minimize_to_bar");
+  });
+}
+
+// 1-Click GitHub Self-Updater
+const updateBtn = document.getElementById("btn-app-update");
+
+async function checkForUpdatesSilent() {
+  if (!updateBtn) return;
+  try {
+    const info = await invokeBackend("check_app_update");
+    if (info && info.update_available) {
+      updateBtn.textContent = `⬆️ Update to ${info.latest_version}`;
+      updateBtn.className = "btn btn-primary";
+      updateBtn.title = `New GitHub Release ${info.latest_version} available! Click to auto-install.`;
+    } else if (info && info.current_version) {
+      updateBtn.textContent = `↻ Update (${info.current_version})`;
+    }
+  } catch (e) {}
+}
+
+if (updateBtn) {
+  updateBtn.addEventListener("click", async () => {
+    const origText = updateBtn.textContent;
+    updateBtn.textContent = "↻ Checking GitHub...";
+    updateBtn.disabled = true;
+    try {
+      const info = await invokeBackend("check_app_update");
+      let shouldInstall = false;
+      if (info.update_available) {
+        shouldInstall = confirm(
+          `New Genesis Seek update available on GitHub!\n\nCurrent Version: ${info.current_version}\nLatest Version: ${info.latest_version}\nPackage: ${info.asset_name}\n\nClick OK to automatically download, install, and restart Genesis Seek.`
+        );
+      } else {
+        shouldInstall = confirm(
+          `You are on Genesis Seek ${info.current_version} (Latest GitHub Release: ${info.latest_version}).\n\nWould you like to pull and install the latest ${info.asset_name} build directly from GitHub anyway?`
+        );
+      }
+
+      if (shouldInstall) {
+        updateBtn.textContent = "⬇️ Updating from GitHub...";
+        const res = await invokeBackend("install_app_update");
+        alert(res.message);
+      } else {
+        updateBtn.textContent = info.update_available
+          ? `⬆️ Update to ${info.latest_version}`
+          : `↻ Update (${info.current_version})`;
+      }
+    } catch (err) {
+      alert("Update check / install notice:\n" + err);
+      updateBtn.textContent = origText;
+    } finally {
+      updateBtn.disabled = false;
+    }
   });
 }
 
@@ -1163,6 +1221,7 @@ async function refreshLiveMemory() {
 
   await refreshLiveMemory();
   await refreshVtStatus();
+  checkForUpdatesSilent();
 
   try {
     await renderBrowserExtensionInstaller();

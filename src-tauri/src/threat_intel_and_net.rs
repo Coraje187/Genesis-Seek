@@ -685,3 +685,350 @@ fn extract_domain_simple(raw_url: &str) -> String {
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
     host_port.split(':').next().unwrap_or("").trim_end_matches('.').to_string()
 }
+
+// ============================================================================
+// 1-Click GitHub Release Self-Updater (Windows & Linux)
+// ============================================================================
+
+const GITHUB_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/Coraje187/Genesis-Seek/releases/latest";
+const MAX_UPDATE_BYTES: u64 = 80 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub asset_name: String,
+    pub download_url: String,
+    pub release_url: String,
+    pub published_at: String,
+    pub release_notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppUpdateInstallResult {
+    pub success: bool,
+    pub restarted: bool,
+    pub installed_version: String,
+    pub saved_path: String,
+    pub message: String,
+}
+
+fn parse_version_tuple(ver: &str) -> (u32, u32, u32) {
+    let clean = ver.trim().trim_start_matches(|c: char| !c.is_ascii_digit());
+    let mut parts = clean.split('.').map(|p| {
+        p.chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0)
+    });
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
+}
+
+/// Remove any leftover `.old` executable created by a previous Windows in-place update.
+pub fn cleanup_old_update_backup() {
+    if let Ok(exe) = std::env::current_exe() {
+        let old_backup = exe.with_extension("exe.old");
+        if old_backup.exists() {
+            let _ = fs::remove_file(old_backup);
+        }
+    }
+}
+
+/// Check `Coraje187/Genesis-Seek` GitHub Releases for a newer version.
+pub fn check_github_update() -> Result<AppUpdateInfo, String> {
+    cleanup_old_update_backup();
+    let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(15))
+        .user_agent("GenesisSeek-Updater/0.2 (+https://github.com/Coraje187/Genesis-Seek)")
+        .build();
+
+    let resp = agent
+        .get(GITHUB_LATEST_RELEASE_API)
+        .set("Accept", "application/vnd.github+json")
+        .call()
+        .map_err(|e| format!("Failed to reach GitHub Releases API: {}", e))?;
+
+    let body: serde_json::Value = serde_json::from_reader(resp.into_reader())
+        .map_err(|e| format!("Invalid GitHub release JSON: {}", e))?;
+
+    let raw_tag = body["tag_name"].as_str().unwrap_or("v0.2.0").trim();
+    let latest_version = if raw_tag.starts_with('v') {
+        raw_tag.to_string()
+    } else {
+        format!("v{}", raw_tag)
+    };
+
+    let release_url = body["html_url"]
+        .as_str()
+        .unwrap_or("https://github.com/Coraje187/Genesis-Seek/releases/latest")
+        .to_string();
+    let published_at = body["published_at"].as_str().unwrap_or("").to_string();
+    let release_notes = body["body"]
+        .as_str()
+        .unwrap_or("Latest security engine and threat intelligence update.")
+        .to_string();
+
+    let cur_tuple = parse_version_tuple(&current_version);
+    let lat_tuple = parse_version_tuple(&latest_version);
+    let update_available = lat_tuple > cur_tuple;
+
+    // Select best asset for current OS
+    let mut asset_name = String::new();
+    let mut download_url = String::new();
+
+    if let Some(assets) = body["assets"].as_array() {
+        #[cfg(target_os = "windows")]
+        {
+            // Prefer standalone genesis-seek.exe for instant in-place self-replacement
+            for a in assets {
+                let name = a["name"].as_str().unwrap_or("");
+                let url = a["browser_download_url"].as_str().unwrap_or("");
+                if name.eq_ignore_ascii_case("genesis-seek.exe") {
+                    asset_name = name.to_string();
+                    download_url = url.to_string();
+                    break;
+                }
+            }
+            if download_url.is_empty() {
+                for a in assets {
+                    let name = a["name"].as_str().unwrap_or("");
+                    let url = a["browser_download_url"].as_str().unwrap_or("");
+                    if name.ends_with(".exe") || (name.contains("windows") && name.ends_with(".zip")) {
+                        asset_name = name.to_string();
+                        download_url = url.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            for a in assets {
+                let name = a["name"].as_str().unwrap_or("");
+                let url = a["browser_download_url"].as_str().unwrap_or("");
+                if name.ends_with(".AppImage") || name == "genesis-seek" {
+                    asset_name = name.to_string();
+                    download_url = url.to_string();
+                    break;
+                }
+            }
+            if download_url.is_empty() {
+                for a in assets {
+                    let name = a["name"].as_str().unwrap_or("");
+                    let url = a["browser_download_url"].as_str().unwrap_or("");
+                    if name.ends_with(".deb") || (name.contains("linux") && name.ends_with(".tar.gz")) {
+                        asset_name = name.to_string();
+                        download_url = url.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if download_url.is_empty() {
+        #[cfg(target_os = "windows")]
+        {
+            asset_name = "genesis-seek.exe".to_string();
+            download_url =
+                "https://github.com/Coraje187/Genesis-Seek/releases/latest/download/genesis-seek.exe"
+                    .to_string();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            asset_name = "GitHub Release Page".to_string();
+            download_url = release_url.clone();
+        }
+    }
+
+    Ok(AppUpdateInfo {
+        current_version,
+        latest_version,
+        update_available,
+        asset_name,
+        download_url,
+        release_url,
+        published_at,
+        release_notes,
+    })
+}
+
+/// Download the latest release binary from GitHub and apply the self-update on Windows or Linux.
+pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
+    let info = check_github_update()?;
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(90))
+        .user_agent("GenesisSeek-Updater/0.2 (+https://github.com/Coraje187/Genesis-Seek)")
+        .build();
+
+    #[cfg(target_os = "windows")]
+    {
+        if !info.download_url.ends_with(".exe") {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", &info.release_url])
+                .spawn();
+            return Ok(AppUpdateInstallResult {
+                success: true,
+                restarted: false,
+                installed_version: info.latest_version,
+                saved_path: info.release_url,
+                message: "Opened GitHub Release page in your browser to download the latest package."
+                    .to_string(),
+            });
+        }
+
+        let resp = agent
+            .get(&info.download_url)
+            .call()
+            .map_err(|e| format!("Failed to download update from GitHub: {}", e))?;
+
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        resp.into_reader()
+            .take(MAX_UPDATE_BYTES)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("Error reading update stream: {}", e))?;
+
+        if bytes.len() < 1024 * 100 || !bytes.starts_with(b"MZ") {
+            return Err("Downloaded file is not a valid Windows PE executable.".to_string());
+        }
+
+        let current_exe = std::env::current_exe()
+            .map_err(|e| format!("Cannot resolve current executable path: {}", e))?;
+        let old_backup = current_exe.with_extension("exe.old");
+        let _ = fs::remove_file(&old_backup);
+
+        // Windows allows renaming a running .exe and writing the new .exe in its place!
+        if fs::rename(&current_exe, &old_backup).is_ok() {
+            if let Err(e) = fs::write(&current_exe, &bytes) {
+                // Roll back rename if writing failed
+                let _ = fs::rename(&old_backup, &current_exe);
+                return Err(format!("Failed to write new executable: {}", e));
+            }
+
+            realtime_shield::log_security_event(
+                "System Updater",
+                "Info",
+                &format!("Updated Genesis Seek to {}", info.latest_version),
+                &current_exe.to_string_lossy(),
+                "Restarting into new build",
+            );
+
+            // Spawn the newly written executable and exit current process after 600ms
+            let exe_clone = current_exe.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(600));
+                let _ = std::process::Command::new(&exe_clone).spawn();
+                std::process::exit(0);
+            });
+
+            return Ok(AppUpdateInstallResult {
+                success: true,
+                restarted: true,
+                installed_version: info.latest_version.clone(),
+                saved_path: current_exe.to_string_lossy().to_string(),
+                message: format!(
+                    "Genesis Seek {} downloaded and installed in-place! Restarting application now...",
+                    info.latest_version
+                ),
+            });
+        }
+
+        // Fallback if running from a protected directory: stage in Downloads and launch
+        let dl_target = dirs::download_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("genesis-seek-latest.exe");
+        fs::write(&dl_target, &bytes)
+            .map_err(|e| format!("Failed to save update to Downloads: {}", e))?;
+
+        let _ = std::process::Command::new(&dl_target).spawn();
+        return Ok(AppUpdateInstallResult {
+            success: true,
+            restarted: true,
+            installed_version: info.latest_version.clone(),
+            saved_path: dl_target.to_string_lossy().to_string(),
+            message: format!(
+                "Downloaded Genesis Seek {} to {} and launched the updated version!",
+                info.latest_version,
+                dl_target.display()
+            ),
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if info.download_url.ends_with(".AppImage") || info.asset_name == "genesis-seek" {
+            let resp = agent
+                .get(&info.download_url)
+                .call()
+                .map_err(|e| format!("Failed to download Linux update from GitHub: {}", e))?;
+
+            let mut bytes = Vec::new();
+            use std::io::Read;
+            resp.into_reader()
+                .take(MAX_UPDATE_BYTES)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Error reading Linux update stream: {}", e))?;
+
+            if bytes.len() < 1024 * 100 || !bytes.starts_with(b"\x7fELF") {
+                return Err("Downloaded file is not a valid Linux ELF/AppImage binary.".to_string());
+            }
+
+            let target_bin = std::env::var_os("APPIMAGE")
+                .map(PathBuf::from)
+                .or_else(|| std::env::current_exe().ok())
+                .ok_or_else(|| "Cannot determine current Linux binary path".to_string())?;
+
+            let staged = target_bin.with_extension("new");
+            if fs::write(&staged, &bytes).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755));
+                }
+                if fs::rename(&staged, &target_bin).is_ok() {
+                    let bin_clone = target_bin.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(600));
+                        let _ = std::process::Command::new(&bin_clone).spawn();
+                        std::process::exit(0);
+                    });
+
+                    return Ok(AppUpdateInstallResult {
+                        success: true,
+                        restarted: true,
+                        installed_version: info.latest_version.clone(),
+                        saved_path: target_bin.to_string_lossy().to_string(),
+                        message: format!(
+                            "Genesis Seek {} installed! Restarting application now...",
+                            info.latest_version
+                        ),
+                    });
+                }
+            }
+        }
+
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&info.release_url)
+            .spawn();
+        Ok(AppUpdateInstallResult {
+            success: true,
+            restarted: false,
+            installed_version: info.latest_version,
+            saved_path: info.release_url,
+            message: "Opened GitHub Release page in your browser to download the Linux package."
+                .to_string(),
+        })
+    }
+}

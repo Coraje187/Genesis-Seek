@@ -17,7 +17,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
-use threat_intel_and_net::{NetworkConnectionItem, ThreatFeedStatus, VtConfigStatus, VtScanReport};
+use threat_intel_and_net::{
+    AppUpdateInfo, AppUpdateInstallResult, NetworkConnectionItem, ThreatFeedStatus, VtConfigStatus,
+    VtScanReport,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserPreferences {
@@ -297,6 +300,20 @@ async fn virustotal_lookup(target: String) -> Result<VtScanReport, String> {
 }
 
 #[tauri::command]
+async fn check_app_update() -> Result<AppUpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(threat_intel_and_net::check_github_update)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn install_app_update() -> Result<AppUpdateInstallResult, String> {
+    tauri::async_runtime::spawn_blocking(threat_intel_and_net::install_github_update)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn get_detected_browsers() -> Vec<DetectedBrowser> {
     extension_installer::detect_installed_browsers()
 }
@@ -435,6 +452,8 @@ fn main() {
             save_virustotal_config,
             clear_virustotal_key,
             virustotal_lookup,
+            check_app_update,
+            install_app_update,
             get_detected_browsers,
             install_browser_guard_extension,
             open_browser_extension_folder,
