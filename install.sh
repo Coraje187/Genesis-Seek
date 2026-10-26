@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  🛡️ Genesis Seek v0.3.0 — Enterprise-Grade Linux Installer & Auto-Start Daemon
+#  🛡️ Genesis Seek v0.3.1 — Enterprise-Grade Linux Installer & Auto-Start Daemon
 #  Endpoint Defense, fanotify Pre-Execution Blocking, YARA-X, Encrypted Quarantine
 # ==============================================================================
 set -euo pipefail
 
 REPO="Coraje187/Genesis-Seek"
-VERSION="v0.3.0"
+VERSION="v0.3.1"
 BIN_NAME="genesis-seek"
 INSTALL_BIN="/usr/local/bin/${BIN_NAME}"
 POLKIT_POLICY="/usr/share/polkit-1/actions/io.genesisseek.security.policy"
@@ -46,7 +46,8 @@ if [[ -z "${SOURCE_BIN}" || ! -f "${SOURCE_BIN}" ]]; then
     DOWNLOAD_CANDIDATES=(
         "https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek-linux-x86_64"
         "https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek"
-        "https://github.com/${REPO}/releases/download/${VERSION}/Genesis-Seek-0.3.0-x86_64.AppImage"
+        "https://github.com/${REPO}/releases/download/${VERSION}/Genesis-Seek-0.3.1-x86_64.AppImage"
+        "https://github.com/${REPO}/releases/download/${VERSION}/Genesis-Seek-${VERSION#v}-x86_64.AppImage"
     )
 
     for url in "${DOWNLOAD_CANDIDATES[@]}"; do

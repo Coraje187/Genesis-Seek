@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",

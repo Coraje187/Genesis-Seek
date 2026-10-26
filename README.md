@@ -9,31 +9,31 @@
 
 ---
 
-## 📥 Downloads & Installation (v0.3.0 Enterprise)
+## 📥 Downloads & Installation (v0.3.1 Enterprise)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
-* **Portable Archive**: [**genesis-seek-v0.3.0-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek-v0.3.0-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
+* **Portable Archive**: [**genesis-seek-v0.3.1-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek-v0.3.1-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Terminal Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Standalone AppImage**: [**Genesis-Seek-0.3.0-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-0.3.0-x86_64.AppImage)
-* **Linux Archive**: [**genesis-seek-v0.3.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/genesis-seek-v0.3.0-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.3.1-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-0.3.1-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.3.1-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek-v0.3.1-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard Extensions
 
 | Browser | Package / Link | Installation Guide |
 | :--- | :--- | :--- |
-| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.0.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
-| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.0.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
+| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.1.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.1.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
 | **Mozilla Add-ons (AMO)** | [**Official Firefox AMO Store**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click official store installation and auto-updates. |
 
 ---
 
-## ✨ Core Enterprise Protection Layers (v0.3.0)
+## ✨ Core Enterprise Protection Layers (v0.3.1)
 
 1. **Multi-Engine File & Directory Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
    - **YARA-X & Pure-Rust Pattern Engine**: Loads custom and community `.yar` rules from `rules/` with dynamic hot-reloading at runtime.
@@ -66,8 +66,16 @@
 
 ---
 
-## 📋 Changelog: What's New in v0.3.0 Enterprise
+## 📋 Changelog
 
+### 🚀 What's New in v0.3.1 Enterprise
+* **Interactive Threat Alert UI:** Replaced aggressive popups with a sleek, non-repulsive dark/cream decision window allowing users to instantly **Allow & Trust** or **Quarantine Threat**.
+* **Multi-Drive Protection:** Auto-discovers and recursively monitors secondary and external drives (`D:\`, `E:\`, `I:\` on Windows; `/media`, `/run/media`, `/mnt` on Linux).
+* **Game Repack & Crack Heuristics:** Added non-destructive classification for FitGirl, DODI, EMPRESS, and Goldberg Steam emulators (`rules/riskware_and_repack.yar`).
+* **Linux Boot Daemon Persistence:** Auto-configures both systemd user service (`genesis-seek.service`) and XDG autostart (`genesis-seek.desktop`) with `--minimized` boot and `SIGHUP` immunity.
+* **Windows Autostart Integration:** Automatically registers persistence into Windows Startup folder with background tray minimization.
+
+### What's New in v0.3.0 Enterprise
 * **Engine:** Upgraded pure-Rust YARA signature engine and in-memory LRU verdict cache for microsecond binary re-checks.
 * **Pre-Execution Defense:** Added low-level thread suspension on Windows (`NtSuspendProcess`) and kernel `fanotify` on Linux.
 * **Vault:** Added 256-bit ChaCha20-Poly1305 authenticated encryption for all quarantined threats (`.gvault`).

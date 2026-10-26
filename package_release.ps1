@@ -5,7 +5,8 @@ if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Path $outDir | Out-Null
 
 $ver = $env:GITHUB_REF_NAME
-if (-not $ver) { $ver = "v0.3.0" }
+if (-not $ver) { $ver = "v0.3.1" }
+$verNum = if ($ver.StartsWith('v')) { $ver.Substring(1) } else { $ver }
 
 Write-Host "Packaging release assets for version $ver in $outDir..."
 
@@ -23,7 +24,7 @@ $chromeManifest = @"
 {
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.3.0",
+  "version": "$verNum",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",
@@ -82,7 +83,7 @@ $ffManifest = @"
 {
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.3.0",
+  "version": "$verNum",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",
