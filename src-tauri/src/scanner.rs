@@ -590,6 +590,9 @@ fn detection(
 
 /// Inspect a single file using the LRU Verdict Cache, SQLite SHA-256 DB, YARA rules, and entropy analysis.
 pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
+    if is_excluded_path(path) {
+        return None;
+    }
     let metadata = fs::metadata(path).ok()?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_FILE_BYTES {
         return None;
@@ -786,11 +789,25 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
 /// Paths the scanner must never inspect (our own vault, canary decoys, and SQLite DB).
 pub fn is_excluded_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
-    s.contains(".genesis_seek_quarantine")
+    if s.contains(".genesis_seek_quarantine")
         || s.contains(".genesis-seek-canary")
         || s.ends_with("threat_hashes.db")
         || s.ends_with("threat_hashes.db-wal")
         || s.ends_with("threat_hashes.db-shm")
+        || s.contains(".mount_Genes")
+        || s.contains(".mount_genesis")
+        || s.contains("/.mount_")
+        || s.contains("genesis-seek") && (s.contains("/rules/") || s.contains("\\rules\\"))
+    {
+        return true;
+    }
+
+    if let Ok(cur) = std::env::current_exe() {
+        if path == cur || path.canonicalize().ok() == cur.canonicalize().ok() {
+            return true;
+        }
+    }
+    false
 }
 
 fn get_scan_targets(scan_type: &str) -> Vec<PathBuf> {
