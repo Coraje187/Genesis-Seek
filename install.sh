@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  🛡️ Genesis Seek v0.3.0 — Enterprise-Grade Linux Installer & Capability Hardening
+#  🛡️ Genesis Seek v0.3.0 — Enterprise-Grade Linux Installer & Auto-Start Daemon
 #  Endpoint Defense, fanotify Pre-Execution Blocking, YARA-X, Encrypted Quarantine
 # ==============================================================================
 set -euo pipefail
@@ -12,7 +12,10 @@ INSTALL_BIN="/usr/local/bin/${BIN_NAME}"
 POLKIT_POLICY="/usr/share/polkit-1/actions/io.genesisseek.security.policy"
 DESKTOP_DIR="${HOME}/.local/share/applications"
 DESKTOP_FILE="${DESKTOP_DIR}/genesis-seek.desktop"
-AUTOSTART_FILE="${HOME}/.config/autostart/genesis-seek.desktop"
+AUTOSTART_DIR="${HOME}/.config/autostart"
+AUTOSTART_FILE="${AUTOSTART_DIR}/genesis-seek.desktop"
+SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+SYSTEMD_SERVICE="${SYSTEMD_USER_DIR}/genesis-seek.service"
 ICON_DIR="${HOME}/.local/share/icons/hicolor/512x512/apps"
 CONFIG_DIR="${HOME}/.config/genesis-seek"
 RULES_DIR="${CONFIG_DIR}/rules"
@@ -21,7 +24,7 @@ echo "=========================================================="
 echo "  🛡️ Installing Genesis Seek ($VERSION) Enterprise Tier"
 echo "=========================================================="
 
-mkdir -p "${CONFIG_DIR}" "${RULES_DIR}" "${DESKTOP_DIR}" "${ICON_DIR}" "${HOME}/.config/autostart"
+mkdir -p "${CONFIG_DIR}" "${RULES_DIR}" "${DESKTOP_DIR}" "${ICON_DIR}" "${AUTOSTART_DIR}" "${SYSTEMD_USER_DIR}"
 
 SOURCE_BIN=""
 if [[ -f "./src-tauri/target/release/${BIN_NAME}" ]]; then
@@ -30,36 +33,72 @@ elif [[ -f "./${BIN_NAME}" ]]; then
     SOURCE_BIN="./${BIN_NAME}"
 elif [[ -f "./release_assets/${BIN_NAME}" ]]; then
     SOURCE_BIN="./release_assets/${BIN_NAME}"
+elif [[ -f "./genesis-seek-linux-x86_64" ]]; then
+    SOURCE_BIN="./genesis-seek-linux-x86_64"
 fi
 
 # If local binary not found, download from GitHub release
 if [[ -z "${SOURCE_BIN}" || ! -f "${SOURCE_BIN}" ]]; then
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek"
     TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"' EXIT
-    echo "--> Downloading Genesis Seek binary from GitHub (${VERSION})..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_DIR/$BIN_NAME" || true
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q "$DOWNLOAD_URL" -O "$TEMP_DIR/$BIN_NAME" || true
+    echo "--> Downloading Genesis Seek binary from GitHub Releases (${VERSION})..."
+
+    DOWNLOAD_CANDIDATES=(
+        "https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek-linux-x86_64"
+        "https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek"
+        "https://github.com/${REPO}/releases/download/${VERSION}/Genesis-Seek-0.3.0-x86_64.AppImage"
+    )
+
+    for url in "${DOWNLOAD_CANDIDATES[@]}"; do
+        echo "    Trying: $url"
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsSL "$url" -o "$TEMP_DIR/$BIN_NAME" 2>/dev/null; then
+                if [[ -s "$TEMP_DIR/$BIN_NAME" ]]; then
+                    SOURCE_BIN="$TEMP_DIR/$BIN_NAME"
+                    break
+                fi
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -q "$url" -O "$TEMP_DIR/$BIN_NAME" 2>/dev/null; then
+                if [[ -s "$TEMP_DIR/$BIN_NAME" ]]; then
+                    SOURCE_BIN="$TEMP_DIR/$BIN_NAME"
+                    break
+                fi
+            fi
+        fi
+    done
+
+    # Fallback: check tarball
+    if [[ -z "${SOURCE_BIN}" || ! -s "${SOURCE_BIN}" ]]; then
+        TAR_URL="https://github.com/${REPO}/releases/download/${VERSION}/genesis-seek-${VERSION}-linux-x86_64.tar.gz"
+        echo "    Trying tarball: $TAR_URL"
+        if curl -fsSL "$TAR_URL" -o "$TEMP_DIR/gs.tar.gz" 2>/dev/null; then
+            tar -xzf "$TEMP_DIR/gs.tar.gz" -C "$TEMP_DIR" 2>/dev/null || true
+            if [[ -f "$TEMP_DIR/$BIN_NAME" ]]; then
+                SOURCE_BIN="$TEMP_DIR/$BIN_NAME"
+            fi
+        fi
     fi
-    if [[ -f "$TEMP_DIR/$BIN_NAME" ]]; then
-        SOURCE_BIN="$TEMP_DIR/$BIN_NAME"
-    elif [[ -d "./src-tauri" ]] && command -v cargo >/dev/null 2>&1; then
-        echo "⚙️ Compiling Genesis Seek release binary locally..."
-        (cd src-tauri && cargo build --release)
-        SOURCE_BIN="./src-tauri/target/release/${BIN_NAME}"
+
+    # Fallback: local compile if cargo is present
+    if [[ -z "${SOURCE_BIN}" || ! -f "${SOURCE_BIN}" ]]; then
+        if [[ -d "./src-tauri" ]] && command -v cargo >/dev/null 2>&1; then
+            echo "⚙️ Compiling Genesis Seek release binary locally..."
+            (cd src-tauri && cargo build --release)
+            SOURCE_BIN="./src-tauri/target/release/${BIN_NAME}"
+        fi
     fi
 fi
 
 if [[ -z "${SOURCE_BIN}" || ! -f "${SOURCE_BIN}" ]]; then
-    echo "❌ Could not find or download ${BIN_NAME} binary."
+    echo "❌ Could not download or locate genesis-seek binary."
     exit 1
 fi
 
 chmod +x "${SOURCE_BIN}"
 
-# 1. Install to /usr/local/bin if sudo is available, otherwise $HOME/.local/bin
+# 1. Install to /usr/local/bin if sudo available, otherwise $HOME/.local/bin
+TARGET_EXEC="${INSTALL_BIN}"
 if command -v sudo >/dev/null 2>&1 && sudo -v 2>/dev/null; then
     echo "🔐 Installing to ${INSTALL_BIN} with root/capabilities..."
     sudo install -m 0755 "${SOURCE_BIN}" "${INSTALL_BIN}"
@@ -102,7 +141,7 @@ else
     cp -f "${SOURCE_BIN}" "${USER_BIN}"
     chmod +x "${USER_BIN}"
     TARGET_EXEC="${USER_BIN}"
-    echo "⚠️ Installed to ${USER_BIN} (User-Space Watcher mode). Run with sudo to enable fanotify Tier 1."
+    echo "⚠️ Installed to ${USER_BIN} (User-Space Watcher mode). Run installer with sudo for fanotify Tier 1."
 fi
 
 # 2. Copy YARA rules
@@ -118,7 +157,7 @@ else
     curl -fsSL "$ICON_URL" -o "${ICON_DIR}/genesis-seek.svg" 2>/dev/null || true
 fi
 
-# 4. Create Desktop & Autostart entries
+# 4. Create Desktop Application Menu Launcher
 cat > "${DESKTOP_FILE}" <<EOF
 [Desktop Entry]
 Type=Application
@@ -131,15 +170,57 @@ Categories=Utility;Security;System;
 StartupNotify=false
 EOF
 chmod +x "${DESKTOP_FILE}"
-cp -f "${DESKTOP_FILE}" "${AUTOSTART_FILE}"
+
+# 5. Create Autostart on Boot (XDG Autostart) - starts minimized to tray
+cat > "${AUTOSTART_FILE}" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Genesis Seek
+Comment=Genesis Seek Enterprise Endpoint Defense (Background Shield)
+Exec=${TARGET_EXEC} --minimized
+Icon=genesis-seek
+Terminal=false
+Categories=Utility;Security;System;
+X-GNOME-Autostart-enabled=true
+StartupNotify=false
+EOF
+chmod +x "${AUTOSTART_FILE}"
+
+# 6. Create and Enable systemd User Service (24/7 background persistence)
+if command -v systemctl >/dev/null 2>&1; then
+    cat > "${SYSTEMD_SERVICE}" <<EOF
+[Unit]
+Description=Genesis Seek Enterprise Real-Time Shield
+After=graphical-session.target network.target
+
+[Service]
+Type=simple
+ExecStart=${TARGET_EXEC} --minimized
+Restart=always
+RestartSec=3
+Environment="WEBKIT_DISABLE_DMABUF_RENDERER=1"
+Environment="WEBKIT_DISABLE_COMPOSITING_MODE=1"
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable genesis-seek.service 2>/dev/null || true
+    systemctl --user restart genesis-seek.service 2>/dev/null || true
+    echo "✅ Configured systemd user service: starts automatically on boot & restarts if killed."
+else
+    # Non-systemd fallback: start in background now
+    nohup "${TARGET_EXEC}" --minimized >/dev/null 2>&1 &
+fi
 
 echo ""
 echo "=========================================================="
 echo "  ✅ Genesis Seek ($VERSION) installed successfully!"
 echo "=========================================================="
 echo "  • Executable: ${TARGET_EXEC}"
-echo "  • Desktop shortcut created in Application menu."
-echo "  • Autostart configured for desktop system bar tray."
-echo ""
-echo "  Launch anytime by running:  genesis-seek"
+echo "  • Start on Boot: Configured (systemd user service + XDG autostart)"
+echo "  • System Tray: Active in background"
+echo "  • Launch Dashboard anytime from your App Menu or by running:"
+echo "      genesis-seek"
 echo "=========================================================="

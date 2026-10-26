@@ -410,6 +410,110 @@ fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn ensure_linux_autostart_configured() {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+
+    let exe_path = if let Ok(appimage) = std::env::var("APPIMAGE") {
+        PathBuf::from(appimage)
+    } else if let Ok(current) = std::env::current_exe() {
+        current
+    } else {
+        PathBuf::from("/usr/local/bin/genesis-seek")
+    };
+
+    let exe_str = exe_path.to_string_lossy().to_string();
+
+    // 1. Applications menu launcher (.desktop)
+    let apps_dir = home.join(".local/share/applications");
+    let _ = fs::create_dir_all(&apps_dir);
+    let desktop_content = format!(
+        "[Desktop Entry]\n\
+        Type=Application\n\
+        Name=Genesis Seek\n\
+        Comment=Genesis Seek Enterprise Endpoint Defense\n\
+        Exec=\"{}\"\n\
+        Icon=security-high\n\
+        Terminal=false\n\
+        Categories=Utility;Security;System;\n\
+        StartupNotify=false\n",
+        exe_str
+    );
+    let _ = fs::write(apps_dir.join("genesis-seek.desktop"), desktop_content);
+
+    // 2. Autostart on boot (XDG Autostart) - starts minimized to tray
+    let autostart_dir = home.join(".config/autostart");
+    let _ = fs::create_dir_all(&autostart_dir);
+    let autostart_content = format!(
+        "[Desktop Entry]\n\
+        Type=Application\n\
+        Name=Genesis Seek\n\
+        Comment=Genesis Seek Enterprise Endpoint Defense (Background Shield)\n\
+        Exec=\"{}\" --minimized\n\
+        Icon=security-high\n\
+        Terminal=false\n\
+        Categories=Utility;Security;System;\n\
+        X-GNOME-Autostart-enabled=true\n\
+        StartupNotify=false\n",
+        exe_str
+    );
+    let _ = fs::write(autostart_dir.join("genesis-seek.desktop"), autostart_content);
+
+    // 3. Systemd user service (starts on boot & restarts 24/7 if killed)
+    let systemd_dir = home.join(".config/systemd/user");
+    if fs::create_dir_all(&systemd_dir).is_ok() {
+        let service_content = format!(
+            "[Unit]\n\
+            Description=Genesis Seek Enterprise Real-Time Shield\n\
+            After=graphical-session.target network.target\n\n\
+            [Service]\n\
+            Type=simple\n\
+            ExecStart=\"{}\" --minimized\n\
+            Restart=always\n\
+            RestartSec=5\n\
+            Environment=\"WEBKIT_DISABLE_DMABUF_RENDERER=1\"\n\
+            Environment=\"WEBKIT_DISABLE_COMPOSITING_MODE=1\"\n\n\
+            [Install]\n\
+            WantedBy=default.target\n",
+            exe_str
+        );
+        let service_file = systemd_dir.join("genesis-seek.service");
+        if !service_file.exists() {
+            let _ = fs::write(&service_file, service_content);
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output();
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "enable", "genesis-seek.service"])
+                .output();
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ensure_windows_autostart_configured() {
+    if let Some(roaming) = dirs::data_dir() {
+        let startup_dir = roaming
+            .join("Microsoft")
+            .join("Windows")
+            .join("Start Menu")
+            .join("Programs")
+            .join("Startup");
+        if startup_dir.exists() {
+            if let Ok(exe) = std::env::current_exe() {
+                let cmd_file = startup_dir.join("GenesisSeek.cmd");
+                if !cmd_file.exists() {
+                    let cmd_content = format!("@echo off\r\nstart \"\" \"{}\" --minimized\r\n", exe.to_string_lossy());
+                    let _ = fs::write(cmd_file, cmd_content);
+                }
+            }
+        }
+    }
+}
+
 fn main() {
     #[cfg(unix)]
     unsafe {
@@ -445,6 +549,20 @@ fn main() {
         .setup(|app| {
             tray_indicator::register_desktop_bar_indicator(app.handle().clone());
             threat_alert::set_alert_app_handle(app.handle().clone());
+
+            #[cfg(target_os = "linux")]
+            ensure_linux_autostart_configured();
+
+            #[cfg(target_os = "windows")]
+            ensure_windows_autostart_configured();
+
+            let is_minimized = std::env::args().any(|a| a == "--minimized" || a == "--silent" || a == "--tray");
+            if is_minimized {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {

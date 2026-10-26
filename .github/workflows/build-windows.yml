@@ -115,7 +115,8 @@ jobs:
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
-          chmod +x ./genesis-seek-linux-x86_64
+          cp src-tauri/target/release/genesis-seek ./genesis-seek
+          chmod +x ./genesis-seek-linux-x86_64 ./genesis-seek
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
             cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.3.0-x86_64.AppImage || true
           fi
@@ -129,6 +130,7 @@ jobs:
           files: |
             ${{ env.TAR_NAME }}
             genesis-seek-linux-x86_64
+            genesis-seek
             Genesis-Seek-0.3.0-x86_64.AppImage
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
