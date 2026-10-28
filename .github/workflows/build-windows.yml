@@ -82,33 +82,32 @@ jobs:
           cargo build --release
           npx --yes @tauri-apps/cli@^2.0.0 build --bundles deb,appimage || npx --yes @tauri-apps/cli@^2.0.0 build --bundles deb || true
 
-      - name: Package Standalone Linux Tarball & Clean Old 0.1.0 Release Assets
+      - name: Package Standalone Linux Tarball & Clean Old Release Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ github.ref_name }}"
-          if [ -z "$VER" ]; then VER="v0.2.0"; fi
+          if [ -z "$VER" ]; then VER="v0.2.1"; fi
+          CLEAN_VER="${VER#v}"
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
           chmod +x ./genesis-seek-linux-x86_64
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.2.0-x86_64.AppImage
-            chmod +x ./Genesis-Seek-0.2.0-x86_64.AppImage
+            cp src-tauri/target/release/bundle/appimage/*.AppImage "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+            chmod +x "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
           fi
-          gh release delete-asset "$VER" "Genesis-Seek-0.1.0-x86_64.AppImage" --yes || true
-          gh release delete-asset "$VER" "genesis-seek-v0.1.0-linux-x86_64.tar.gz" --yes || true
           echo "TAR_NAME=$TAR_NAME" >> $GITHUB_ENV
 
       - name: Upload Linux Assets to GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.2.0' }}
+          tag_name: ${{ github.ref_name || 'v0.2.1' }}
           files: |
             ${{ env.TAR_NAME }}
             genesis-seek-linux-x86_64
-            Genesis-Seek-0.2.0-x86_64.AppImage
+            Genesis-Seek-*-x86_64.AppImage
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
         env:

@@ -6,7 +6,7 @@
 set -e
 
 REPO="Coraje187/Genesis-Seek"
-VERSION="v0.2.0"
+VERSION="v0.2.1"
 INSTALL_DIR="$HOME/.local/bin"
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/512x512/apps"
@@ -17,8 +17,8 @@ echo "=========================================================="
 
 mkdir -p "$INSTALL_DIR" "$DESKTOP_DIR" "$ICON_DIR"
 
-# Download the latest Linux AppImage from GitHub release
-DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/genesis-seek-v0.1.0-linux-x86_64.tar.gz"
+# Download the latest Linux bundle from GitHub release
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$VERSION/genesis-seek-$VERSION-linux-x86_64.tar.gz"
 TEMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
@@ -35,8 +35,9 @@ fi
 echo "--> Extracting into $INSTALL_DIR..."
 tar -xzf "$TEMP_DIR/bundle.tar.gz" -C "$TEMP_DIR"
 
-if [ -f "$TEMP_DIR/genesis-seek-v0.1.0-linux-x86_64/genesis-seek" ]; then
-    cp "$TEMP_DIR/genesis-seek-v0.1.0-linux-x86_64/genesis-seek" "$INSTALL_DIR/genesis-seek"
+BIN_PATH=$(find "$TEMP_DIR" -type f -name "genesis-seek" | head -n 1)
+if [ -n "$BIN_PATH" ] && [ -f "$BIN_PATH" ]; then
+    cp "$BIN_PATH" "$INSTALL_DIR/genesis-seek"
     chmod +x "$INSTALL_DIR/genesis-seek"
 else
     echo "Error: Could not find extracted binary."
