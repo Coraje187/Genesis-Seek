@@ -444,27 +444,18 @@ fn ensure_linux_autostart_configured() {
     );
     let _ = fs::write(apps_dir.join("genesis-seek.desktop"), desktop_content);
 
-    // 2. Autostart on boot (XDG Autostart) - starts minimized to tray
-    let autostart_dir = home.join(".config/autostart");
-    let _ = fs::create_dir_all(&autostart_dir);
-    let autostart_content = format!(
-        "[Desktop Entry]\n\
-        Type=Application\n\
-        Name=Genesis Seek\n\
-        Comment=Genesis Seek Enterprise Endpoint Defense (Background Shield)\n\
-        Exec=\"{}\" --minimized\n\
-        Icon=security-high\n\
-        Terminal=false\n\
-        Categories=Utility;Security;System;\n\
-        X-GNOME-Autostart-enabled=true\n\
-        StartupNotify=false\n",
-        exe_str
-    );
-    let _ = fs::write(autostart_dir.join("genesis-seek.desktop"), autostart_content);
-
-    // 3. Systemd user service (starts on boot & restarts 24/7 if killed)
+    // 2. Configure autostart on boot (Systemd user service preferred, fallback to XDG Autostart)
     let systemd_dir = home.join(".config/systemd/user");
-    if fs::create_dir_all(&systemd_dir).is_ok() {
+    let autostart_dir = home.join(".config/autostart");
+    let autostart_file = autostart_dir.join("genesis-seek.desktop");
+
+    let has_systemd = std::process::Command::new("systemctl")
+        .args(["--user", "status"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if has_systemd && fs::create_dir_all(&systemd_dir).is_ok() {
         let service_content = format!(
             "[Unit]\n\
             Description=Genesis Seek Enterprise Real-Time Shield\n\
@@ -475,7 +466,8 @@ fn ensure_linux_autostart_configured() {
             Restart=always\n\
             RestartSec=5\n\
             Environment=\"WEBKIT_DISABLE_DMABUF_RENDERER=1\"\n\
-            Environment=\"WEBKIT_DISABLE_COMPOSITING_MODE=1\"\n\n\
+            Environment=\"WEBKIT_DISABLE_COMPOSITING_MODE=1\"\n\
+            Environment=\"APPIMAGE_EXTRACT_AND_RUN=1\"\n\n\
             [Install]\n\
             WantedBy=default.target\n",
             exe_str
@@ -490,6 +482,27 @@ fn ensure_linux_autostart_configured() {
                 .args(["--user", "enable", "genesis-seek.service"])
                 .output();
         }
+        // Remove redundant XDG autostart entry so it doesn't launch two instances on boot
+        if autostart_file.exists() {
+            let _ = fs::remove_file(autostart_file);
+        }
+    } else {
+        // Fallback for non-systemd distros: XDG Autostart
+        let _ = fs::create_dir_all(&autostart_dir);
+        let autostart_content = format!(
+            "[Desktop Entry]\n\
+            Type=Application\n\
+            Name=Genesis Seek\n\
+            Comment=Genesis Seek Enterprise Endpoint Defense (Background Shield)\n\
+            Exec=\"{}\" --minimized\n\
+            Icon=security-high\n\
+            Terminal=false\n\
+            Categories=Utility;Security;System;\n\
+            X-GNOME-Autostart-enabled=true\n\
+            StartupNotify=false\n",
+            exe_str
+        );
+        let _ = fs::write(autostart_file, autostart_content);
     }
 }
 
@@ -538,17 +551,27 @@ fn main() {
         }
     }
 
-    let _ = extension_installer::setup_firefox_permanent_autoload();
-    realtime_shield::spawn_realtime_file_watcher();
-    realtime_shield::spawn_ransomware_canary();
-    realtime_shield::spawn_process_monitor();
-    realtime_shield::spawn_browser_guard_bridge();
-    threat_intel_and_net::spawn_threat_feed_scheduler();
-
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let is_minimized = args.iter().any(|a| a == "--minimized" || a == "--silent" || a == "--tray");
+            if !is_minimized {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
+            }
+        }))
         .setup(|app| {
             tray_indicator::register_desktop_bar_indicator(app.handle().clone());
             threat_alert::set_alert_app_handle(app.handle().clone());
+
+            let _ = extension_installer::setup_firefox_permanent_autoload();
+            realtime_shield::spawn_realtime_file_watcher();
+            realtime_shield::spawn_ransomware_canary();
+            realtime_shield::spawn_process_monitor();
+            realtime_shield::spawn_browser_guard_bridge();
+            threat_intel_and_net::spawn_threat_feed_scheduler();
 
             #[cfg(target_os = "linux")]
             ensure_linux_autostart_configured();
