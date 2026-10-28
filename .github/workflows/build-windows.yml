@@ -40,29 +40,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.3.1' }}
+          tag_name: ${{ github.ref_name || 'v0.3.2' }}
           overwrite_files: true
           fail_on_unmatched_files: false
           body: |
-            ## 🛡️ Genesis Seek Enterprise v0.3.1 — Release Assets Guide
+            ## 🛡️ Genesis Seek Enterprise v0.3.2 — Release Assets Guide
 
             ### 🌐 Browser Guard Extensions:
             * **Google Chrome, Microsoft Edge & Brave:**
-              Download [`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.1.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.1.zip) (Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked").
+              Download [`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.2.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.2.zip) (Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked").
             * **Mozilla Firefox:**
-              Download [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.xpi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.xpi) (or install 1-click from [Mozilla AMO](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)).
-              Source zip: [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.1.zip).
+              Download [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.xpi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.xpi) (or install 1-click from [Mozilla AMO](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)).
+              Source zip: [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.zip).
 
             ### 🪟 Windows Desktop Application:
-            * **Standalone Executable:** [`genesis-seek.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek.exe)
-            * **NSIS Setup Installer:** [`Genesis.Seek_0.3.1_x64-setup.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis.Seek_0.3.1_x64-setup.exe)
-            * **MSI Enterprise Package:** [`Genesis.Seek_0.3.1_x64_en-US.msi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis.Seek_0.3.1_x64_en-US.msi)
-            * **Complete Portable Archive:** [`genesis-seek-v0.3.1-windows-x86_64.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek-v0.3.1-windows-x86_64.zip)
+            * **Standalone Executable:** [`genesis-seek.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek.exe)
+            * **NSIS Setup Installer:** [`Genesis.Seek_0.3.2_x64-setup.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis.Seek_0.3.2_x64-setup.exe)
+            * **MSI Enterprise Package:** [`Genesis.Seek_0.3.2_x64_en-US.msi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis.Seek_0.3.2_x64_en-US.msi)
+            * **Complete Portable Archive:** [`genesis-seek-v0.3.2-windows-x86_64.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek-v0.3.2-windows-x86_64.zip)
 
             ### 🐧 Linux Desktop Application:
-            * **Standalone AppImage:** [`Genesis-Seek-0.3.1-x86_64.AppImage`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis-Seek-0.3.1-x86_64.AppImage)
-            * **Debian / Ubuntu Package:** [`Genesis.Seek_0.3.1_amd64.deb`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/Genesis.Seek_0.3.1_amd64.deb)
-            * **Portable Tarball:** [`genesis-seek-v0.3.1-linux-x86_64.tar.gz`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.1/genesis-seek-v0.3.1-linux-x86_64.tar.gz)
+            * **Standalone AppImage:** [`Genesis-Seek-0.3.2-x86_64.AppImage`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-0.3.2-x86_64.AppImage)
+            * **Debian / Ubuntu Package:** [`Genesis.Seek_0.3.2_amd64.deb`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis.Seek_0.3.2_amd64.deb)
+            * **Portable Tarball:** [`genesis-seek-v0.3.2-linux-x86_64.tar.gz`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek-v0.3.2-linux-x86_64.tar.gz)
             * **1-Line Terminal Installer:** `curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash`
 
             ---
@@ -113,14 +113,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ github.ref_name }}"
-          if [ -z "$VER" ]; then VER="v0.3.1"; fi
+          if [ -z "$VER" ]; then VER="v0.3.2"; fi
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
           cp src-tauri/target/release/genesis-seek ./genesis-seek
           chmod +x ./genesis-seek-linux-x86_64 ./genesis-seek
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.3.1-x86_64.AppImage || true
+            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.3.2-x86_64.AppImage || true
             cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-x86_64.AppImage || true
           fi
           echo "TAR_NAME=$TAR_NAME" >> $GITHUB_ENV
@@ -129,14 +129,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.3.1' }}
+          tag_name: ${{ github.ref_name || 'v0.3.2' }}
           overwrite_files: true
           fail_on_unmatched_files: false
           files: |
             ${{ env.TAR_NAME }}
             genesis-seek-linux-x86_64
             genesis-seek
-            Genesis-Seek-0.3.1-x86_64.AppImage
+            Genesis-Seek-0.3.2-x86_64.AppImage
             Genesis-Seek-x86_64.AppImage
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/appimage/*.AppImage
