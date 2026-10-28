@@ -426,15 +426,24 @@ fn main() {
         }
     }
 
-    let _ = extension_installer::setup_firefox_permanent_autoload();
-    realtime_shield::spawn_realtime_file_watcher();
-    realtime_shield::spawn_ransomware_canary();
-    realtime_shield::spawn_process_monitor();
-    realtime_shield::spawn_browser_guard_bridge();
-
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let is_minimized = args.iter().any(|a| a == "--minimized");
+            if !is_minimized {
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
+            }
+        }))
         .setup(|app| {
             tray_indicator::register_desktop_bar_indicator(app.handle().clone());
+            let _ = extension_installer::setup_firefox_permanent_autoload();
+            realtime_shield::spawn_realtime_file_watcher();
+            realtime_shield::spawn_ransomware_canary();
+            realtime_shield::spawn_process_monitor();
+            realtime_shield::spawn_browser_guard_bridge();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

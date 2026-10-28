@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="night">
+<head>
+  <meta charset="UTF-8" />
+  <title>Genesis Seek Browser Guard</title>
+  <script src="theme-init.js"></script>
+  <style>
+    :root, html[data-theme="night"] {
+      --bg: #090d16;
+      --card: #111827;
+      --border: #1f2d47;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #00e5ff;
+      --ok: #10b981;
+    }
+    html[data-theme="cream"] {
+      --bg: #f7f3e9;
+      --card: #fdfbf7;
+      --border: #e2d7c3;
+      --text: #1c1917;
+      --muted: #686054;
+      --accent: #8c6528;
+      --ok: #0d9488;
+    }
+    body {
+      width: 330px;
+      margin: 0;
+      padding: 15px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .title {
+      font-weight: 800;
+      font-size: 0.9rem;
+      letter-spacing: 0.8px;
+      color: var(--accent);
+    }
+    .theme-btn {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .domain {
+      font-weight: 700;
+      font-size: 0.94rem;
+      word-break: break-all;
+    }
+    .badge {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border-radius: 5px;
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+    .safe { background: rgba(16, 185, 129, 0.18); color: var(--ok); }
+    .danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    .muted { color: var(--muted); font-size: 0.78rem; margin-top: 6px; line-height: 1.35; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand-row">
+      <img src="icon.svg" width="24" height="24" alt="Genesis Seek" />
+      <div class="title">GENESIS SEEK GUARD</div>
+    </div>
+    <button id="popup-theme-toggle" class="theme-btn" title="Switch Night / Cream Light Theme">☀️ Cream</button>
+  </div>
+  <div class="card">
+    <div class="domain" id="current-domain">Inspecting tab...</div>
+    <div id="verdict-badge" class="badge safe">Verified Clean</div>
+    <div class="muted" id="verdict-reason">Real-time phishing, homograph & cryptojacking shield enabled.</div>
+  </div>
+  <div class="card" style="font-size:0.76rem;color:var(--muted);">
+    <div>Desktop Bridge: <strong id="bridge-status" style="color:var(--accent);">Checking...</strong></div>
+    <div style="margin-top:4px;">Network Rules: <strong>DeclarativeNetRequest Armed</strong></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
