@@ -108,22 +108,25 @@ jobs:
           cargo build --release
           npx --yes @tauri-apps/cli@^2.0.0 build --bundles deb,appimage || npx --yes @tauri-apps/cli@^2.0.0 build --bundles deb || true
 
-      - name: Package Standalone Linux Tarball & Clean Old 0.1.0 Release Assets
+      - name: Package Standalone Linux Release Assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ github.ref_name }}"
           if [ -z "$VER" ]; then VER="v0.3.2"; fi
+          CLEAN_VER="${VER#v}"
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
-          cp src-tauri/target/release/genesis-seek ./genesis-seek
-          chmod +x ./genesis-seek-linux-x86_64 ./genesis-seek
+          chmod +x ./genesis-seek-linux-x86_64
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-0.3.2-x86_64.AppImage || true
-            cp src-tauri/target/release/bundle/appimage/*.AppImage ./Genesis-Seek-x86_64.AppImage || true
+            cp src-tauri/target/release/bundle/appimage/*.AppImage "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+            chmod +x "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+            # Remove Tauri's raw default name so it doesn't get uploaded as a duplicate
+            rm -f src-tauri/target/release/bundle/appimage/*.AppImage
           fi
           echo "TAR_NAME=$TAR_NAME" >> $GITHUB_ENV
+          echo "APPIMAGE_NAME=Genesis-Seek-${CLEAN_VER}-x86_64.AppImage" >> $GITHUB_ENV
 
       - name: Upload Linux Assets to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -135,10 +138,7 @@ jobs:
           files: |
             ${{ env.TAR_NAME }}
             genesis-seek-linux-x86_64
-            genesis-seek
-            Genesis-Seek-0.3.2-x86_64.AppImage
-            Genesis-Seek-x86_64.AppImage
+            ${{ env.APPIMAGE_NAME }}
             src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

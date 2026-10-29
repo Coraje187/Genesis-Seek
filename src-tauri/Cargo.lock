@@ -1407,6 +1407,8 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "dirs 5.0.1",
+ "gio",
+ "glib",
  "hex",
  "libc",
  "lru",

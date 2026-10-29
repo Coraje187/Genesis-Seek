@@ -138,69 +138,43 @@ mod linux_sni {
         (pct, active_count, title, subtitle)
     }
 
-    /// Generates a 32x32 ARGB32 shield icon pixmap dynamically colored by protection percentage:
-    /// - 100%: Emerald / Cyan (#10b981 / #00e5ff)
-    /// - 50..=75%: Amber Warning (#f59e0b)
-    /// - 0..=25%: Red Danger (#ef4444)
+    const NIGHT_SHIELD_ARGB: &[u8; 4096] = include_bytes!("night_shield_32x32.argb");
+    const CREAM_SHIELD_ARGB: &[u8; 4096] = include_bytes!("cream_shield_32x32.argb");
+
+    /// Uses the authentic transparent Genesis Seek shield emblem for the system tray:
+    /// - 100%: Pure transparent silver shield with cyan/emerald crystal core
+    /// - 50..=75%: Transparent shield with subtle amber warning badge dot
+    /// - 0..=25%: Transparent shield with subtle red danger badge dot
     fn build_shield_icon_pixmap(pct: u8) -> Variant {
         let size: i32 = 32;
-        let mut bytes = Vec::with_capacity((size * size * 4) as usize);
+        let mut bytes = NIGHT_SHIELD_ARGB.to_vec();
 
-        let (r_main, g_main, b_main, r_border, g_border, b_border) = if pct == 100 {
-            (0x10u8, 0xb9u8, 0x81u8, 0x00u8, 0xe5u8, 0xffu8) // Emerald + Cyan border
-        } else if pct >= 50 {
-            (0xf5u8, 0x9eu8, 0x0bu8, 0xfbu8, 0xbfu8, 0x24u8) // Amber warning
-        } else {
-            (0xefu8, 0x44u8, 0x44u8, 0xf8u8, 0x71u8, 0x71u8) // Red danger
-        };
-
-        for y in 0..size {
-            for x in 0..size {
-                let fx = (x as f32) - 15.5;
-                let fy = (y as f32) - 15.5;
-
-                // Shield silhouette math
-                let top_ok = y >= 3 && y <= 29;
-                let half_width = if y < 14 {
-                    11.5
-                } else {
-                    11.5 * (1.0 - ((y - 14) as f32 / 16.0).powf(1.35))
-                };
-                let inside_outer = top_ok && fx.abs() <= half_width;
-                let inside_inner = y >= 5
-                    && y <= 27
-                    && fx.abs() <= (half_width - 2.2).max(0.0);
-
-                // Inner emblem (check or exclamation)
-                let is_symbol = if pct == 100 {
-                    // Checkmark
-                    let seg1 = (x >= 10 && x <= 14) && (y - (x + 4)).abs() <= 1;
-                    let seg2 = (x >= 14 && x <= 22) && (y - (32 - x)).abs() <= 1;
-                    seg1 || seg2
-                } else {
-                    // Exclamation mark (!)
-                    let bar = fx.abs() <= 1.3 && y >= 9 && y <= 18;
-                    let dot = fx.abs() <= 1.3 && y >= 21 && y <= 23;
-                    bar || dot
-                };
-
-                if is_symbol && inside_inner {
-                    // Crisp white symbol
-                    bytes.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
-                } else if inside_inner {
-                    // Deep obsidian interior blended with status color
-                    bytes.extend_from_slice(&[
-                        0xf2,
-                        (r_main as u16 / 2 + 12) as u8,
-                        (g_main as u16 / 2 + 18) as u8,
-                        (b_main as u16 / 2 + 28) as u8,
-                    ]);
-                } else if inside_outer {
-                    // Glowing shield border
-                    bytes.extend_from_slice(&[0xff, r_border, g_border, b_border]);
-                } else {
-                    let _ = fy;
-                    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        if pct < 100 {
+            let (r_badge, g_badge, b_badge) = if pct >= 50 {
+                (0xf5u8, 0x9eu8, 0x0bu8) // Amber warning
+            } else {
+                (0xefu8, 0x44u8, 0x44u8) // Red danger
+            };
+            // Overlay small 7x7 circular status badge in bottom-right corner
+            for by in 23..30 {
+                for bx in 23..30 {
+                    let dx = (bx as f32) - 26.5;
+                    let dy = (by as f32) - 26.5;
+                    let dist = (dx * dx + dy * dy).sqrt();
+                    let idx = ((by * 32 + bx) * 4) as usize;
+                    if dist <= 3.2 {
+                        if dist <= 2.2 {
+                            bytes[idx] = 0xff;
+                            bytes[idx + 1] = r_badge;
+                            bytes[idx + 2] = g_badge;
+                            bytes[idx + 3] = b_badge;
+                        } else {
+                            bytes[idx] = 0xff;
+                            bytes[idx + 1] = 0x0f;
+                            bytes[idx + 2] = 0x17;
+                            bytes[idx + 3] = 0x2a;
+                        }
+                    }
                 }
             }
         }
