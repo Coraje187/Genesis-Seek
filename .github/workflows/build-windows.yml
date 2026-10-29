@@ -125,6 +125,10 @@ jobs:
             # Remove Tauri's raw default name so it doesn't get uploaded as a duplicate
             rm -f src-tauri/target/release/bundle/appimage/*.AppImage
           fi
+          # Clean up any legacy duplicate file aliases on the release
+          gh release delete-asset "$VER" "genesis-seek" --yes || true
+          gh release delete-asset "$VER" "Genesis-Seek-x86_64.AppImage" --yes || true
+          gh release delete-asset "$VER" "Genesis.Seek_${CLEAN_VER}_amd64.AppImage" --yes || true
           echo "TAR_NAME=$TAR_NAME" >> $GITHUB_ENV
           echo "APPIMAGE_NAME=Genesis-Seek-${CLEAN_VER}-x86_64.AppImage" >> $GITHUB_ENV
 
