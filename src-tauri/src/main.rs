@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod extension_installer;
+mod kernel_defense;
 mod process_guard;
 mod quarantine;
 mod realtime_shield;
@@ -410,6 +411,16 @@ fn minimize_to_bar(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn audit_linux_kernel_mptcp() -> kernel_defense::LinuxKernelAudit {
+    kernel_defense::audit_linux_kernel_mptcp()
+}
+
+#[tauri::command]
+fn harden_linux_kernel_mptcp(disable_mptcp: bool) -> Result<kernel_defense::LinuxKernelAudit, String> {
+    kernel_defense::harden_linux_kernel_mptcp(disable_mptcp)
+}
+
 #[cfg(target_os = "linux")]
 fn ensure_linux_autostart_configured() {
     let home = match dirs::home_dir() {
@@ -434,12 +445,13 @@ fn ensure_linux_autostart_configured() {
         "[Desktop Entry]\n\
         Type=Application\n\
         Name=Genesis Seek\n\
-        Comment=Genesis Seek Enterprise Endpoint Defense\n\
+        Comment=Endpoint Threat Defense & Browser Guard\n\
         Exec=\"{}\"\n\
-        Icon=security-high\n\
+        Icon=genesis-seek\n\
         Terminal=false\n\
         Categories=Utility;Security;System;\n\
-        StartupNotify=false\n",
+        StartupWMClass=genesis-seek\n\
+        StartupNotify=true\n",
         exe_str
     );
     let _ = fs::write(apps_dir.join("genesis-seek.desktop"), desktop_content);
@@ -493,11 +505,12 @@ fn ensure_linux_autostart_configured() {
             "[Desktop Entry]\n\
             Type=Application\n\
             Name=Genesis Seek\n\
-            Comment=Genesis Seek Enterprise Endpoint Defense (Background Shield)\n\
+            Comment=Endpoint Threat Defense & Browser Guard (Background Shield)\n\
             Exec=\"{}\" --minimized\n\
-            Icon=security-high\n\
+            Icon=genesis-seek\n\
             Terminal=false\n\
             Categories=Utility;Security;System;\n\
+            StartupWMClass=genesis-seek\n\
             X-GNOME-Autostart-enabled=true\n\
             StartupNotify=false\n",
             exe_str
@@ -625,6 +638,8 @@ fn main() {
             open_browser_extension_folder,
             minimize_to_bar,
             get_live_memory_usage,
+            audit_linux_kernel_mptcp,
+            harden_linux_kernel_mptcp,
             threat_alert::get_pending_threat_alert,
             threat_alert::allowlist_and_trust_threat,
             threat_alert::quarantine_threat_file,

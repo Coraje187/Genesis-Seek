@@ -5,7 +5,7 @@ if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Path $outDir | Out-Null
 
 $ver = $env:GITHUB_REF_NAME
-if (-not $ver) { $ver = "v0.3.2" }
+if (-not $ver) { $ver = "v0.3.3" }
 $verNum = if ($ver.StartsWith('v')) { $ver.Substring(1) } else { $ver }
 
 Write-Host "Packaging release assets for version $ver in $outDir..."

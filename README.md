@@ -9,31 +9,31 @@
 
 ---
 
-## 📥 Downloads & Installation (v0.3.2 Enterprise)
+## 📥 Downloads & Installation (v0.3.3 Enterprise)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
-* **Portable Archive**: [**genesis-seek-v0.3.2-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek-v0.3.2-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
+* **Portable Archive**: [**genesis-seek-v0.3.3-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/genesis-seek-v0.3.3-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Terminal Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Standalone AppImage**: [**Genesis-Seek-0.3.2-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-0.3.2-x86_64.AppImage)
-* **Linux Archive**: [**genesis-seek-v0.3.2-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/genesis-seek-v0.3.2-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.3.3-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/Genesis-Seek-0.3.3-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.3.3-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/genesis-seek-v0.3.3-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard Extensions
 
 | Browser | Package / Link | Installation Guide |
 | :--- | :--- | :--- |
-| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.2.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.2.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
-| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.2/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.2.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
+| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.3.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.3.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.3.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.3/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.3.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
 | **Mozilla Add-ons (AMO)** | [**Official Firefox AMO Store**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click official store installation and auto-updates. |
 
 ---
 
-## ✨ Core Enterprise Protection Layers (v0.3.2)
+## ✨ Core Enterprise Protection Layers (v0.3.3)
 
 1. **Multi-Engine File & Directory Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
    - **YARA-X & Pure-Rust Pattern Engine**: Loads custom and community `.yar` rules from `rules/` with dynamic hot-reloading at runtime.
@@ -46,29 +46,39 @@
    - **Linux Kernel Pre-Exec (`fanotify`)**: Blocks untrusted binary execution at instruction zero using `FAN_OPEN_EXEC_PERM | FAN_CLOSE_WRITE`, with automated fallback to unprivileged user-space watcher if root capabilities are absent.
    - **Ransomware Canary Decoy Tripwires**: Arms hidden decoy documents (`.genesis-seek-canary/`) and triggers instant Critical mitigation if tampering is detected.
 
-3. **Live Cloud Threat Intelligence, Optional VirusTotal v3 API & Network Guard ([`src-tauri/src/threat_intel_and_net.rs`](src-tauri/src/threat_intel_and_net.rs))**
+3. **Linux Kernel MPTCP Exploit Defense & Hardening ([`src-tauri/src/kernel_defense.rs`](src-tauri/src/kernel_defense.rs))**
+   - **CVE-2026-98432 Audit**: Live inspection of Linux kernel Multipath TCP (MPTCP) stack state (`/proc/sys/net/mptcp/enabled`).
+   - **1-Click Sysctl Hardening**: Instantly closes the zero-click remote root vector by disabling MPTCP in memory (`sysctl -w net.mptcp.enabled=0`) and persistently via `/etc/sysctl.d/99-genesis-seek-mptcp.conf`.
+
+4. **Live Cloud Threat Intelligence, Optional VirusTotal v3 API & Network Guard ([`src-tauri/src/threat_intel_and_net.rs`](src-tauri/src/threat_intel_and_net.rs))**
    - **Zero-Telemetry Feeds**: Automated background sync with **Abuse.ch MalwareBazaar** (batch inserted into SQLite), **Abuse.ch URLhaus**, and **PhishStats**.
    - **Dynamic Browser Guard Rule Sync**: Compiles active malicious domains directly into Manifest V3 `DeclarativeNetRequest` rulesets.
    - **VirusTotal v3 Multi-Engine Cloud Lookup**: Optional zero-upload SHA-256 and domain reputation check across 70+ antivirus engines.
    - **Active TCP Socket Guard**: Inspects live sockets to flag reverse-shell ports (`4444`, `1337`), Stratum mining pools, and C2 beacons.
 
-4. **ChaCha20-Poly1305 Encrypted Quarantine Vault ([`src-tauri/src/quarantine.rs`](src-tauri/src/quarantine.rs))**
+5. **ChaCha20-Poly1305 Encrypted Quarantine Vault ([`src-tauri/src/quarantine.rs`](src-tauri/src/quarantine.rs))**
    - Neutralizes malware payloads using **ChaCha20-Poly1305** authenticated encryption with a local 256-bit vault key into `.gvault` files.
    - Strips all execution bits (`chmod 000` / read-only ACLs), safely shreds original files, and supports 1-click **Restore** with automatic SHA-256 allowlisting or permanent shredding.
 
-5. **Windows Native System Tray & 24/7 Background Persistence ([`src-tauri/src/tray_indicator.rs`](src-tauri/src/tray_indicator.rs))**
+6. **Windows Native System Tray & 24/7 Background Persistence ([`src-tauri/src/tray_indicator.rs`](src-tauri/src/tray_indicator.rs))**
    - **System Tray Notification Icon**: Runs in the Windows taskbar notification area next to the clock with live tooltip (`Genesis Seek — 100% Protected (Real-Time Shield Active)`).
    - **Always-On Shield**: Closing the window with the **"X"** button or minimizing quietly hides the dashboard into the system tray while keeping all background protection active.
    - **Quick Actions Menu**: Right-click the tray icon to **Open Dashboard**, **Run Quick Scan**, or **Quit**.
 
-6. **Dual Theme System ("🌙 Obsidian Night" & "☀️ Warm Cream Light")**
+7. **Dual Theme System ("🌙 Obsidian Night" & "☀️ Warm Cream Light")**
    - Seamless switching between themes with zero-flicker pre-paint memory.
 
 ---
 
 ## 📋 Changelog
 
-### 🚀 What's New in v0.3.2 Enterprise
+### 🚀 What's New in v0.3.3 Enterprise (Kernel MPTCP Shield & Hotfix Release)
+* **Linux Kernel MPTCP Exploit Shield (CVE-2026-98432):** Real-time detection and 1-click mitigation for the critical CVSS 9.8 remote code execution vulnerability in the Linux Multipath TCP subsystem.
+* **1-Click Kernel Sysctl Hardening:** Instantly neutralizes the zero-click network attack vector (`net.mptcp.enabled = 0`) with persistent `/etc/sysctl.d/99-genesis-seek-mptcp.conf` deployment.
+* **Kernel Advisory Dashboard Banner:** Proactively alerts Linux users if their kernel networking stack is exposed, with direct links to audit and harden the host.
+* **Desktop Launcher & Icon Hotfix:** Resolved desktop entry launcher branding to guarantee official 512×512 branding (`genesis-seek.png`) and updated enterprise tagline across all Linux environments.
+
+### What's New in v0.3.2 Enterprise
 * **Interactive Threat Alert UI:** Replaced aggressive popups with a sleek, non-repulsive dark/cream decision window allowing users to instantly **Allow & Trust** or **Quarantine Threat**.
 * **Multi-Drive Protection:** Auto-discovers and recursively monitors secondary and external drives (`D:\`, `E:\`, `I:\` on Windows; `/media`, `/run/media`, `/mnt` on Linux).
 * **Game Repack & Crack Heuristics:** Added non-destructive classification for FitGirl, DODI, EMPRESS, and Goldberg Steam emulators (`rules/riskware_and_repack.yar`).

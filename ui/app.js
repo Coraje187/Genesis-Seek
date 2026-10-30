@@ -76,6 +76,18 @@ const fallbackState = {
       action_taken: "Connection Blocked",
     },
   ],
+  kernelAudit: {
+    is_linux: true,
+    kernel_release: "Linux Kernel",
+    mptcp_supported: true,
+    mptcp_enabled: true,
+    vulnerability_status: "Vulnerable (CVE-2026-98432 Zero-Click Vector Open)",
+    severity: "Critical",
+    advisory_title: "Critical Linux Kernel TCP/MPTCP Exploit (CVE-2026-98432)",
+    advisory_details: "Multipath TCP is enabled (net.mptcp.enabled = 1). An unauthenticated remote attacker can exploit a race condition in MPTCP suboptions to achieve remote root code execution over TCP. Immediate mitigation: Disable MPTCP.",
+    mitigation_command: "sysctl -w net.mptcp.enabled=0",
+    can_mitigate: true,
+  },
 };
 
 async function invokeBackend(cmd, args = {}) {
@@ -232,6 +244,23 @@ function simulateBackend(cmd, args) {
     }
     case "get_feed_status":
       return { ...fallbackState.feedStatus };
+    case "audit_linux_kernel_mptcp":
+      return { ...fallbackState.kernelAudit };
+    case "harden_linux_kernel_mptcp": {
+      const disable = args.disableMptcp !== false;
+      fallbackState.kernelAudit.mptcp_enabled = !disable;
+      fallbackState.kernelAudit.severity = disable ? "Safe" : "Critical";
+      fallbackState.kernelAudit.vulnerability_status = disable
+        ? "Hardened & Protected (MPTCP Disabled)"
+        : "Vulnerable (CVE-2026-98432 Zero-Click Vector Open)";
+      fallbackState.kernelAudit.advisory_title = disable
+        ? "Linux Kernel Hardened: MPTCP Network Vector Neutralized"
+        : "Critical Linux Kernel TCP/MPTCP Exploit (CVE-2026-98432)";
+      fallbackState.kernelAudit.advisory_details = disable
+        ? "Multipath TCP is disabled (net.mptcp.enabled = 0). Attack vector neutralized."
+        : "Multipath TCP is enabled (net.mptcp.enabled = 1). Vulnerable to CVE-2026-98432.";
+      return { ...fallbackState.kernelAudit };
+    }
     case "sync_threat_feeds":
     case "sync_threat_intelligence": {
       fallbackState.feedStatus.total_hash_signatures += 184;
@@ -447,7 +476,10 @@ document.querySelectorAll(".theme-btn").forEach((btn) => {
 
 // Tab Navigation (supports inline onclick, delegated nav-menu clicks, and programmatic switchTab)
 window.onTabActivated = function (tabName) {
-  if (tabName === "network-intel") refreshNetworkAndFeeds();
+  if (tabName === "network-intel") {
+    refreshNetworkAndFeeds();
+    refreshKernelAudit();
+  }
   if (tabName === "processes") refreshProcessesAndPersistence();
   if (tabName === "quarantine") refreshQuarantine();
   if (tabName === "events" || tabName === "dashboard") refreshEvents();
@@ -823,6 +855,108 @@ document.getElementById("btn-sync-feeds").addEventListener("click", async () => 
 document
   .getElementById("btn-refresh-network")
   .addEventListener("click", refreshNetworkAndFeeds);
+
+// Linux Kernel MPTCP Exploit Defense (CVE-2026-98432)
+let currentKernelAudit = null;
+
+async function refreshKernelAudit() {
+  try {
+    const audit = await invokeBackend("audit_linux_kernel_mptcp");
+    if (!audit) return;
+    currentKernelAudit = audit;
+
+    const banner = document.getElementById("kernel-vulnerability-banner");
+    const statusBadge = document.getElementById("kernel-status-badge");
+    const releaseVal = document.getElementById("kernel-release-val");
+    const mptcpStateVal = document.getElementById("kernel-mptcp-state-val");
+    const advisoryTitle = document.getElementById("kernel-advisory-title");
+    const advisoryDesc = document.getElementById("kernel-advisory-desc");
+    const toggleBtn = document.getElementById("btn-toggle-kernel-hardening");
+
+    if (releaseVal) releaseVal.textContent = audit.kernel_release || "Linux Kernel";
+    if (mptcpStateVal) {
+      mptcpStateVal.textContent = audit.mptcp_enabled ? "Enabled (1)" : "Disabled (0)";
+      mptcpStateVal.style.color = audit.mptcp_enabled ? "var(--sev-high, #ef4444)" : "var(--sev-safe, #10b981)";
+    }
+    if (advisoryTitle) advisoryTitle.textContent = audit.advisory_title;
+    if (advisoryDesc) advisoryDesc.textContent = audit.advisory_details;
+
+    if (statusBadge) {
+      statusBadge.textContent = audit.mptcp_enabled ? "EXPOSED • MPTCP ACTIVE" : "HARDENED • PROTECTED";
+      statusBadge.className = `sev-badge sev-${audit.severity}`;
+    }
+
+    if (toggleBtn) {
+      if (!audit.is_linux || !audit.mptcp_supported) {
+        toggleBtn.style.display = "none";
+      } else {
+        toggleBtn.style.display = "inline-flex";
+        toggleBtn.textContent = audit.mptcp_enabled ? "🛡️ Harden Kernel (Disable MPTCP)" : "Re-Enable MPTCP";
+        toggleBtn.style.background = audit.mptcp_enabled ? "#ef4444" : "";
+        toggleBtn.style.borderColor = audit.mptcp_enabled ? "#ef4444" : "";
+        toggleBtn.className = audit.mptcp_enabled ? "btn btn-primary" : "btn btn-outline";
+      }
+    }
+
+    if (banner) {
+      if (audit.is_linux && audit.mptcp_enabled && localStorage.getItem("gs_kernel_banner_dismissed") !== "true") {
+        banner.style.display = "flex";
+      } else {
+        banner.style.display = "none";
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to audit Linux kernel:", err);
+  }
+}
+
+async function handleKernelHardening(disableMptcp) {
+  const feedback = document.getElementById("kernel-hardening-feedback");
+  const toggleBtn = document.getElementById("btn-toggle-kernel-hardening");
+  const bannerBtn = document.getElementById("btn-kernel-harden-banner");
+  if (feedback) feedback.textContent = "Applying kernel sysctl hardening...";
+  if (toggleBtn) toggleBtn.disabled = true;
+  if (bannerBtn) bannerBtn.disabled = true;
+
+  try {
+    const updated = await invokeBackend("harden_linux_kernel_mptcp", { disableMptcp });
+    if (feedback) {
+      feedback.textContent = disableMptcp ? "✅ Kernel hardened: MPTCP disabled!" : "MPTCP re-enabled.";
+      setTimeout(() => { if (feedback) feedback.textContent = ""; }, 5000);
+    }
+    await refreshKernelAudit();
+    await refreshEvents();
+  } catch (err) {
+    if (feedback) {
+      feedback.textContent = `⚠️ Error: ${err}`;
+      feedback.style.color = "#ef4444";
+    }
+    alert(`Kernel Hardening Error: ${err}`);
+  } finally {
+    if (toggleBtn) toggleBtn.disabled = false;
+    if (bannerBtn) bannerBtn.disabled = false;
+  }
+}
+
+const recheckKernelBtn = document.getElementById("btn-recheck-kernel");
+if (recheckKernelBtn) {
+  recheckKernelBtn.addEventListener("click", refreshKernelAudit);
+}
+
+const toggleKernelBtn = document.getElementById("btn-toggle-kernel-hardening");
+if (toggleKernelBtn) {
+  toggleKernelBtn.addEventListener("click", () => {
+    const shouldDisable = currentKernelAudit ? currentKernelAudit.mptcp_enabled : true;
+    handleKernelHardening(shouldDisable);
+  });
+}
+
+const bannerHardenBtn = document.getElementById("btn-kernel-harden-banner");
+if (bannerHardenBtn) {
+  bannerHardenBtn.addEventListener("click", () => {
+    handleKernelHardening(true);
+  });
+}
 
 // VirusTotal v3 Multi-Engine Cloud Integration (Windows & Linux)
 async function refreshVtStatus() {
@@ -1244,6 +1378,7 @@ async function refreshLiveMemory() {
 
   await refreshLiveMemory();
   await refreshVtStatus();
+  await refreshKernelAudit();
   checkForUpdatesSilent();
 
   try {

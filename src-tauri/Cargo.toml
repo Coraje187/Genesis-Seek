@@ -1,6 +1,6 @@
 [package]
 name = "genesis-seek"
-version = "0.3.2"
+version = "0.3.3"
 description = "Genesis Seek - Enterprise-Grade Cross-Platform Anti-Malware, Pre-Execution Guard & Browser Protection Suite"
 authors = ["Genesis Seek Security"]
 edition = "2021"
