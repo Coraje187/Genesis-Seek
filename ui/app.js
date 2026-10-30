@@ -349,32 +349,32 @@ function simulateBackend(cmd, args) {
           name: "Google Chrome",
           installed: true,
           binary_path: "/usr/bin/google-chrome",
-          extension_dir: "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension",
+          extension_dir: "~/.config/genesis-seek/browser-extension",
         },
         {
           id: "brave",
           name: "Brave Browser",
           installed: true,
           binary_path: "/usr/bin/brave-browser",
-          extension_dir: "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension",
+          extension_dir: "~/.config/genesis-seek/browser-extension",
         },
         {
           id: "edge",
           name: "Microsoft Edge",
           installed: false,
           binary_path: "",
-          extension_dir: "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension",
+          extension_dir: "~/.config/genesis-seek/browser-extension",
         },
         {
           id: "firefox",
           name: "Mozilla Firefox",
           installed: true,
           binary_path: "/usr/bin/firefox",
-          extension_dir: "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension",
+          extension_dir: "~/.config/genesis-seek/browser-extension",
         },
       ];
     case "install_browser_guard_extension": {
-      const extDir = "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension";
+      const extDir = "~/.config/genesis-seek/browser-extension";
       fallbackState.events.unshift({
         timestamp: new Date().toISOString(),
         module: "Browser Guard",
@@ -392,7 +392,7 @@ function simulateBackend(cmd, args) {
       };
     }
     case "open_browser_extension_folder":
-      return "/home/coraje/.gemini/antigravity/scratch/genesis-seek/browser-extension";
+      return "~/.config/genesis-seek/browser-extension";
     case "get_live_memory_usage":
       return { pid: 86151, rss_mb: 174.2, private_mb: 44.8 };
     case "get_virustotal_status":
