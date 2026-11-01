@@ -640,7 +640,11 @@ if (updateBtn) {
       if (shouldInstall) {
         updateBtn.textContent = "⬇️ Updating from GitHub...";
         const res = await invokeBackend("install_app_update");
-        alert(res.message);
+        if (res && res.restarted) {
+          updateBtn.textContent = `✅ Restarting into ${res.installed_version}...`;
+        } else if (res && res.message) {
+          alert(res.message);
+        }
       } else {
         updateBtn.textContent = info.update_available
           ? `⬆️ Update to ${info.latest_version}`

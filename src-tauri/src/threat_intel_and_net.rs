@@ -909,7 +909,7 @@ fn extract_domain_simple(raw_url: &str) -> String {
 
 const GITHUB_LATEST_RELEASE_API: &str =
     "https://api.github.com/repos/Coraje187/Genesis-Seek/releases/latest";
-const MAX_UPDATE_BYTES: u64 = 80 * 1024 * 1024;
+const MAX_UPDATE_BYTES: u64 = 300 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppUpdateInfo {
@@ -921,6 +921,8 @@ pub struct AppUpdateInfo {
     pub release_url: String,
     pub published_at: String,
     pub release_notes: String,
+    #[serde(default)]
+    pub asset_size: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -948,10 +950,20 @@ fn parse_version_tuple(ver: &str) -> (u32, u32, u32) {
     )
 }
 
-/// Remove any leftover `.old` executable created by a previous Windows in-place update.
+/// Remove any leftover `.old` executable created by a previous update.
 pub fn cleanup_old_update_backup() {
     if let Ok(exe) = std::env::current_exe() {
         let old_backup = exe.with_extension("exe.old");
+        if old_backup.exists() {
+            let _ = fs::remove_file(old_backup);
+        }
+        let old_linux = exe.with_extension("old");
+        if old_linux.exists() {
+            let _ = fs::remove_file(old_linux);
+        }
+    }
+    if let Some(appimage) = std::env::var_os("APPIMAGE") {
+        let old_backup = PathBuf::from(appimage).with_extension("old");
         if old_backup.exists() {
             let _ = fs::remove_file(old_backup);
         }
@@ -965,7 +977,7 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
 
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(15))
-        .user_agent("GenesisSeek-Updater/0.2 (+https://github.com/Coraje187/Genesis-Seek)")
+        .user_agent("GenesisSeek-Updater/0.3 (+https://github.com/Coraje187/Genesis-Seek)")
         .build();
 
     let resp = agent
@@ -977,7 +989,7 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
     let body: serde_json::Value = serde_json::from_reader(resp.into_reader())
         .map_err(|e| format!("Invalid GitHub release JSON: {}", e))?;
 
-    let raw_tag = body["tag_name"].as_str().unwrap_or("v0.2.0").trim();
+    let raw_tag = body["tag_name"].as_str().unwrap_or("v0.3.4").trim();
     let latest_version = if raw_tag.starts_with('v') {
         raw_tag.to_string()
     } else {
@@ -1001,6 +1013,7 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
     // Select best asset for current OS
     let mut asset_name = String::new();
     let mut download_url = String::new();
+    let mut asset_size = 0u64;
 
     if let Some(assets) = body["assets"].as_array() {
         #[cfg(target_os = "windows")]
@@ -1009,9 +1022,11 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
             for a in assets {
                 let name = a["name"].as_str().unwrap_or("");
                 let url = a["browser_download_url"].as_str().unwrap_or("");
+                let size = a["size"].as_u64().unwrap_or(0);
                 if name.eq_ignore_ascii_case("genesis-seek.exe") {
                     asset_name = name.to_string();
                     download_url = url.to_string();
+                    asset_size = size;
                     break;
                 }
             }
@@ -1019,9 +1034,11 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
                 for a in assets {
                     let name = a["name"].as_str().unwrap_or("");
                     let url = a["browser_download_url"].as_str().unwrap_or("");
+                    let size = a["size"].as_u64().unwrap_or(0);
                     if name.ends_with(".exe") || (name.contains("windows") && name.ends_with(".zip")) {
                         asset_name = name.to_string();
                         download_url = url.to_string();
+                        asset_size = size;
                         break;
                     }
                 }
@@ -1030,22 +1047,56 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
 
         #[cfg(not(target_os = "windows"))]
         {
-            for a in assets {
-                let name = a["name"].as_str().unwrap_or("");
-                let url = a["browser_download_url"].as_str().unwrap_or("");
-                if name.ends_with(".AppImage") || name == "genesis-seek" {
-                    asset_name = name.to_string();
-                    download_url = url.to_string();
-                    break;
+            let is_running_appimage = std::env::var_os("APPIMAGE").is_some();
+            if is_running_appimage {
+                // If running from an AppImage, match .AppImage first
+                for a in assets {
+                    let name = a["name"].as_str().unwrap_or("");
+                    let url = a["browser_download_url"].as_str().unwrap_or("");
+                    let size = a["size"].as_u64().unwrap_or(0);
+                    if name.ends_with(".AppImage") {
+                        asset_name = name.to_string();
+                        download_url = url.to_string();
+                        asset_size = size;
+                        break;
+                    }
+                }
+            } else {
+                // If running standalone raw binary, match standalone Linux binary first
+                for a in assets {
+                    let name = a["name"].as_str().unwrap_or("");
+                    let url = a["browser_download_url"].as_str().unwrap_or("");
+                    let size = a["size"].as_u64().unwrap_or(0);
+                    if name == "genesis-seek" || name.starts_with("genesis-seek-linux") {
+                        asset_name = name.to_string();
+                        download_url = url.to_string();
+                        asset_size = size;
+                        break;
+                    }
                 }
             }
             if download_url.is_empty() {
                 for a in assets {
                     let name = a["name"].as_str().unwrap_or("");
                     let url = a["browser_download_url"].as_str().unwrap_or("");
+                    let size = a["size"].as_u64().unwrap_or(0);
+                    if name.ends_with(".AppImage") || name == "genesis-seek" || name.starts_with("genesis-seek-linux") {
+                        asset_name = name.to_string();
+                        download_url = url.to_string();
+                        asset_size = size;
+                        break;
+                    }
+                }
+            }
+            if download_url.is_empty() {
+                for a in assets {
+                    let name = a["name"].as_str().unwrap_or("");
+                    let url = a["browser_download_url"].as_str().unwrap_or("");
+                    let size = a["size"].as_u64().unwrap_or(0);
                     if name.ends_with(".deb") || (name.contains("linux") && name.ends_with(".tar.gz")) {
                         asset_name = name.to_string();
                         download_url = url.to_string();
+                        asset_size = size;
                         break;
                     }
                 }
@@ -1077,6 +1128,7 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
         release_url,
         published_at,
         release_notes,
+        asset_size,
     })
 }
 
@@ -1085,8 +1137,8 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
     let info = check_github_update()?;
 
     let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(90))
-        .user_agent("GenesisSeek-Updater/0.2 (+https://github.com/Coraje187/Genesis-Seek)")
+        .timeout(Duration::from_secs(180))
+        .user_agent("GenesisSeek-Updater/0.3 (+https://github.com/Coraje187/Genesis-Seek)")
         .build();
 
     #[cfg(target_os = "windows")]
@@ -1110,12 +1162,41 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
             .call()
             .map_err(|e| format!("Failed to download update from GitHub: {}", e))?;
 
+        let header_content_len = resp
+            .header("Content-Length")
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let expected_size = if info.asset_size > 0 {
+            info.asset_size
+        } else {
+            header_content_len.unwrap_or(0)
+        };
+
         let mut bytes = Vec::new();
         use std::io::Read;
-        resp.into_reader()
+        let mut reader = resp.into_reader();
+        reader
+            .by_ref()
             .take(MAX_UPDATE_BYTES)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("Error reading update stream: {}", e))?;
+
+        // Guard against silent truncation
+        let mut overflow_probe = [0u8; 1];
+        if reader.read(&mut overflow_probe).unwrap_or(0) > 0 {
+            return Err(format!(
+                "Update download exceeded safety limit of {} MB.",
+                MAX_UPDATE_BYTES / (1024 * 1024)
+            ));
+        }
+
+        if expected_size > 0 && bytes.len() as u64 != expected_size {
+            return Err(format!(
+                "Download incomplete: received {} bytes, expected {} bytes.",
+                bytes.len(),
+                expected_size
+            ));
+        }
 
         if bytes.len() < 1024 * 100 || !bytes.starts_with(b"MZ") {
             return Err("Downloaded file is not a valid Windows PE executable.".to_string());
@@ -1142,10 +1223,10 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
                 "Restarting into new build",
             );
 
-            // Spawn the newly written executable and exit current process after 600ms
+            // Spawn the newly written executable and exit current process after a short delay
             let exe_clone = current_exe.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(600));
+                std::thread::sleep(Duration::from_millis(1200));
                 let _ = std::process::Command::new(&exe_clone).spawn();
                 std::process::exit(0);
             });
@@ -1185,18 +1266,50 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
 
     #[cfg(not(target_os = "windows"))]
     {
-        if info.download_url.ends_with(".AppImage") || info.asset_name == "genesis-seek" {
+        let is_appimage = info.download_url.ends_with(".AppImage") || info.asset_name.ends_with(".AppImage");
+        let is_elf = is_appimage || info.asset_name == "genesis-seek" || info.asset_name.starts_with("genesis-seek-linux");
+
+        if is_elf {
             let resp = agent
                 .get(&info.download_url)
                 .call()
                 .map_err(|e| format!("Failed to download Linux update from GitHub: {}", e))?;
 
+            let header_content_len = resp
+                .header("Content-Length")
+                .and_then(|s| s.parse::<u64>().ok());
+
+            let expected_size = if info.asset_size > 0 {
+                info.asset_size
+            } else {
+                header_content_len.unwrap_or(0)
+            };
+
             let mut bytes = Vec::new();
             use std::io::Read;
-            resp.into_reader()
+            let mut reader = resp.into_reader();
+            reader
+                .by_ref()
                 .take(MAX_UPDATE_BYTES)
                 .read_to_end(&mut bytes)
                 .map_err(|e| format!("Error reading Linux update stream: {}", e))?;
+
+            // Guard against silent truncation
+            let mut overflow_probe = [0u8; 1];
+            if reader.read(&mut overflow_probe).unwrap_or(0) > 0 {
+                return Err(format!(
+                    "Linux update download exceeded safety limit of {} MB.",
+                    MAX_UPDATE_BYTES / (1024 * 1024)
+                ));
+            }
+
+            if expected_size > 0 && bytes.len() as u64 != expected_size {
+                return Err(format!(
+                    "Download incomplete: received {} bytes, expected {} bytes.",
+                    bytes.len(),
+                    expected_size
+                ));
+            }
 
             if bytes.len() < 1024 * 100 || !bytes.starts_with(b"\x7fELF") {
                 return Err("Downloaded file is not a valid Linux ELF/AppImage binary.".to_string());
@@ -1214,10 +1327,22 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
                     use std::os::unix::fs::PermissionsExt;
                     let _ = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755));
                 }
+                let old_bak = target_bin.with_extension("old");
+                let _ = fs::remove_file(&old_bak);
+                let _ = fs::rename(&target_bin, &old_bak);
+
                 if fs::rename(&staged, &target_bin).is_ok() {
+                    realtime_shield::log_security_event(
+                        "System Updater",
+                        "Info",
+                        &format!("Updated Genesis Seek to {}", info.latest_version),
+                        &target_bin.to_string_lossy(),
+                        "Restarting into new build",
+                    );
+
                     let bin_clone = target_bin.clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(600));
+                        std::thread::sleep(Duration::from_millis(1200));
                         let _ = std::process::Command::new(&bin_clone).spawn();
                         std::process::exit(0);
                     });
@@ -1232,6 +1357,9 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
                             info.latest_version
                         ),
                     });
+                } else {
+                    // Roll back if rename failed
+                    let _ = fs::rename(&old_bak, &target_bin);
                 }
             }
         }
@@ -1249,3 +1377,23 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
         })
     }
 }
+
+#[cfg(test)]
+mod update_tests {
+    use super::*;
+
+    #[test]
+    fn test_version_tuple_comparison() {
+        assert!(parse_version_tuple("v0.3.4") > parse_version_tuple("v0.3.3"));
+        assert!(parse_version_tuple("v1.0.0") > parse_version_tuple("v0.9.9"));
+        assert_eq!(parse_version_tuple("v0.3.4"), parse_version_tuple("0.3.4"));
+        assert!(parse_version_tuple("v0.3.4-alpha") >= parse_version_tuple("v0.3.4"));
+    }
+
+    #[test]
+    fn test_max_update_bytes_covers_appimage() {
+        // Ensure MAX_UPDATE_BYTES accommodates large multi-arch AppImages (>85MB)
+        assert!(MAX_UPDATE_BYTES >= 200 * 1024 * 1024);
+    }
+}
+
