@@ -1,10 +1,7 @@
-#[cfg(target_os = "linux")]
 use crate::realtime_shield::{self, ShieldState};
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
-use tauri::AppHandle;
-#[cfg(target_os = "linux")]
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 static APP_HANDLE: Lazy<Mutex<Option<AppHandle>>> = Lazy::new(|| Mutex::new(None));
 

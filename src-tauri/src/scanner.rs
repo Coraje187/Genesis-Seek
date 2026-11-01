@@ -516,7 +516,7 @@ fn is_content_scannable(path: &Path, head: &[u8]) -> bool {
         ext.as_str(),
         "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" | "vbs" | "vbe" | "js" | "jse"
             | "hta" | "wsf" | "py" | "pl" | "desktop" | "service" | "exe" | "dll" | "scr"
-            | "com" | "so" | "appimage" | "elf" | "bin"
+            | "com" | "so" | "appimage" | "elf" | "bin" | "url" | "theme" | "website"
     )
 }
 
@@ -695,6 +695,27 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
     }
 
     // Layer 3: Double-extension masquerading & disguised ELF/PE magic header detection.
+    if file_name.contains('\u{202E}')
+        || file_name.contains('\u{202B}')
+        || file_name.contains('\u{202D}')
+        || file_name.contains('\u{200B}')
+        || file_name.contains('\u{2800}')
+    {
+        return store_and_return(Some(detection(
+            &full_path,
+            &sha256_hex,
+            entropy,
+            "Heur.Masquerade.UnicodeRLO",
+            "Trojan.Masquerade",
+            "Critical",
+            "Heuristic Filename Inspector (CVE-2024-43468)",
+            format!(
+                "Deceptive Unicode control character or Right-to-Left Override detected in filename ({:?}).",
+                file_name
+            ),
+        )));
+    }
+
     if DOUBLE_EXT_REGEX.is_match(&file_name) {
         return store_and_return(Some(detection(
             &full_path,
