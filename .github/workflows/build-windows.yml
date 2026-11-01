@@ -120,7 +120,18 @@ jobs:
           cp src-tauri/target/release/genesis-seek ./genesis-seek-linux-x86_64
           chmod +x ./genesis-seek-linux-x86_64
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
-            cp src-tauri/target/release/bundle/appimage/*.AppImage "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+            RAW_APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -n 1)
+            chmod +x "$RAW_APPIMAGE"
+            # Extract and repack with xz -b 1048576 to keep size <80MB for <=v0.3.3 clients
+            "$RAW_APPIMAGE" --appimage-extract
+            wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool || true
+            if [ -f appimagetool ]; then
+              chmod +x appimagetool
+              ARCH=x86_64 ./appimagetool --comp xz --mksquashfs-opt "-b" --mksquashfs-opt "1048576" --mksquashfs-opt "-Xdict-size" --mksquashfs-opt "100%" squashfs-root "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage" || cp "$RAW_APPIMAGE" "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+              rm -rf squashfs-root appimagetool
+            else
+              cp "$RAW_APPIMAGE" "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+            fi
             chmod +x "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
             # Remove Tauri's raw default name so it doesn't get uploaded as a duplicate
             rm -f src-tauri/target/release/bundle/appimage/*.AppImage
