@@ -232,11 +232,11 @@ pub fn evaluate_process_risk(name: &str, exe_path: &str, cmd_line: &str) -> (Str
         || lower_cmd.contains("/dev/tcp/")
         || lower_cmd.contains("stratum+tcp")
         || lower_cmd.contains("xmrig")
-        || lower_cmd.contains("nc -e /bin/")
+        || lower_cmd.contains("nc -e /bin/") || lower_cmd.contains(" -enc ") || lower_cmd.contains("vssadmin delete shadows") || lower_cmd.contains("wmic shadowcopy delete") || lower_cmd.contains("wbadmin delete catalog") || lower_cmd.contains("recoveryenabled no") || lower_cmd.contains("glibc_tunables=") || lower_cmd.contains("unshare -ur") || lower_cmd.contains("nft_verdict") || lower_cmd.contains("nftnl_chain_alloc") || lower_cmd.contains("ipv6exthdrdestopt") || (lower_cmd.contains("certutil") && lower_cmd.contains("-urlcache")) || lower_cmd.contains("frombase64string") || lower_cmd.contains("downloadstring") || (lower_name.contains("mshta") && (lower_cmd.contains("http://") || lower_cmd.contains("https://") || lower_cmd.contains("javascript:") || lower_cmd.contains("vbscript:") || lower_cmd.contains("\u{202e}")))
     {
         return (
             "Critical".to_string(),
-            "Command-line contains obfuscated payload, reverse shell, or miner arguments".to_string(),
+            "Command-line contains obfuscated payload, reverse shell, LOLBin download cradle, or CVE exploit arguments".to_string(),
         );
     }
 

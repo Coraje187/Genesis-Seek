@@ -153,6 +153,10 @@ rule YARA_Python_ObfuscatedExec {
 }
 "#;
 
+const BUNDLED_ENTERPRISE_YARA: &str = include_str!("../../rules/default_enterprise.yar");
+const BUNDLED_RISKWARE_YARA: &str = include_str!("../../rules/riskware_and_repack.yar");
+const BUNDLED_SENTINEL_YARA: &str = include_str!("../../rules/cve_sentinel_heuristics.yar");
+
 /// The EICAR test string is assembled at runtime from two halves so the literal never
 /// appears in our source or compiled binary.
 pub fn eicar_test_string() -> String {
@@ -288,12 +292,20 @@ pub fn sqlite_hash_count() -> usize {
 }
 
 fn ensure_default_yara_files(rules_dir: &Path) {
-    let core_file = rules_dir.join("genesis_core_rules.yar");
-    if !core_file.exists() {
-        let _ = fs::write(core_file, DEFAULT_CORE_YARA_FILE.trim());
+    let bundled_files = [
+        ("genesis_core_rules.yar", DEFAULT_CORE_YARA_FILE),
+        ("default_enterprise.yar", BUNDLED_ENTERPRISE_YARA),
+        ("riskware_and_repack.yar", BUNDLED_RISKWARE_YARA),
+        ("cve_sentinel_heuristics.yar", BUNDLED_SENTINEL_YARA),
+    ];
+    for (filename, contents) in &bundled_files {
+        let target = rules_dir.join(filename);
+        if !target.exists() || *filename == "cve_sentinel_heuristics.yar" {
+            let _ = fs::write(target, contents.trim());
+        }
     }
 
-    // Copy bundled .yar rule files from relative rules folders
+    // Copy any additional custom .yar rule files from relative rules folders
     for rel in &["rules", "../rules", "../../rules"] {
         let rel_p = PathBuf::from(rel);
         if rel_p.is_dir() {
@@ -316,14 +328,23 @@ fn ensure_default_yara_files(rules_dir: &Path) {
 /// Parse `.yar` / `.yara` rule files from `rules/` into `CompiledYaraRule` patterns.
 pub fn load_yara_rules_from_dir(rules_dir: &Path) -> Vec<CompiledYaraRule> {
     let mut rules = Vec::new();
-    let mut raw_sources = vec![DEFAULT_CORE_YARA_FILE.to_string()];
+    let mut raw_sources = vec![
+        DEFAULT_CORE_YARA_FILE.to_string(),
+        BUNDLED_ENTERPRISE_YARA.to_string(),
+        BUNDLED_RISKWARE_YARA.to_string(),
+        BUNDLED_SENTINEL_YARA.to_string(),
+    ];
 
     if let Ok(entries) = fs::read_dir(rules_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+            let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if (ext.eq_ignore_ascii_case("yar") || ext.eq_ignore_ascii_case("yara"))
-                && p.file_name().and_then(|n| n.to_str()) != Some("genesis_core_rules.yar")
+                && fname != "genesis_core_rules.yar"
+                && fname != "default_enterprise.yar"
+                && fname != "riskware_and_repack.yar"
+                && fname != "cve_sentinel_heuristics.yar"
             {
                 if let Ok(text) = fs::read_to_string(&p) {
                     raw_sources.push(text);
@@ -370,7 +391,8 @@ pub fn load_yara_rules_from_dir(rules_dir: &Path) -> Vec<CompiledYaraRule> {
                 sub_patterns.push(format!("{}(?:{})", prefix, pat));
             }
             for lcap in literal_str_re.captures_iter(body) {
-                let lit = regex::escape(&lcap[1]);
+                let unescaped = lcap[1].replace("\\\\", "\\");
+                let lit = regex::escape(&unescaped);
                 sub_patterns.push(format!("(?i)(?:{})", lit));
             }
 
@@ -747,6 +769,36 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
 
     // Layer 4: Compiled YARA-X / Pure-Rust YARA rules engine (`SCANNER_ENGINE`).
     let content_lossy = String::from_utf8_lossy(&buffer);
+    let lower_lossy = content_lossy.to_lowercase();
+
+    // Layer 4a: Binary IOCTL & UTF-8 byte sequence heuristics (CVE-2024-21338 & CVE-2024-43468)
+    let has_appid_ioctl = buffer.windows(4).any(|w| w == [0x18, 0xA0, 0x22, 0x00]);
+    if has_appid_ioctl && (lower_lossy.contains("appid") || lower_lossy.contains("smartscreen")) {
+        return store_and_return(Some(detection(
+            &full_path,
+            &sha256_hex,
+            entropy,
+            "CVE_2024_21338_AppId_Kernel_BYOVD_Abuse",
+            "Exploit.KernelBYOVD",
+            "Critical",
+            "Binary IOCTL Inspector (CVE-2024-21338)",
+            "CVE-2024-21338 Windows Kernel appid.sys raw IOCTL 0x22A018 memory write / FudModule rootkit payload.".to_string(),
+        )));
+    }
+    let has_rlo_bytes = buffer.windows(3).any(|w| w == [0xE2, 0x80, 0xAE] || w == [0xE2, 0x80, 0xAD]);
+    if has_rlo_bytes && (file_name.ends_with(".hta") || file_name.ends_with(".lnk") || file_name.ends_with(".url")) {
+        return store_and_return(Some(detection(
+            &full_path,
+            &sha256_hex,
+            entropy,
+            "CVE_2024_43468_MSHTML_Unicode_RLO_Spoof",
+            "Exploit.MSHTML",
+            "High",
+            "Binary Byte Inspector (CVE-2024-43468)",
+            "CVE-2024-43468 MSHTML platform RCE via embedded UTF-8 Right-to-Left Override bytes.".to_string(),
+        )));
+    }
+
     if let Ok(engine) = SCANNER_ENGINE.read() {
         for rule in &engine.yara_rules {
             if rule.pattern.is_match(&content_lossy) {
@@ -807,9 +859,17 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
     store_and_return(None)
 }
 
-/// Paths the scanner must never inspect (our own vault, canary decoys, and SQLite DB).
+/// Paths the scanner must never inspect (our own vault, canary decoys, SQLite DB, and Genesis-Seek binaries).
 pub fn is_excluded_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
+    let lower_fname = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if lower_fname.starts_with("genesis-seek") || lower_fname.starts_with("genesis.seek") {
+        return true;
+    }
     if s.contains(".genesis_seek_quarantine")
         || s.contains(".genesis-seek-canary")
         || s.ends_with("threat_hashes.db")
@@ -818,7 +878,7 @@ pub fn is_excluded_path(path: &Path) -> bool {
         || s.contains(".mount_Genes")
         || s.contains(".mount_genesis")
         || s.contains("/.mount_")
-        || s.contains("genesis-seek") && (s.contains("/rules/") || s.contains("\\rules\\"))
+        || (s.contains("genesis-seek") || s.contains("Genesis-Seek")) && (s.contains("/rules/") || s.contains("\\rules\\"))
     {
         return true;
     }
