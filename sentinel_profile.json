@@ -1,0 +1,172 @@
+{
+  "name": "Genesis-Seek",
+  "repoUrl": "https://github.com/Coraje187/Genesis-Seek",
+  "version": "v0.3.4 Enterprise",
+  "lastUpdated": "2026-11-06",
+  "modules": [
+    {
+      "id": "mod-file-scan",
+      "name": "Static File & PE/ELF Scanner",
+      "type": "FileScanner",
+      "status": "active",
+      "description": "Scans disk binaries, PE headers, and ELF symbols for known trojans, malware hashes, and known script patterns.",
+      "rulesCount": 1445,
+      "handlesOS": "both"
+    },
+    {
+      "id": "mod-proc-mon",
+      "name": "User-Space Process Monitor",
+      "type": "ProcessMonitor",
+      "status": "active",
+      "description": "Monitors user-space child process creation, NtSuspendProcess pre-execution freeze, and LOLBin command-line blocking.",
+      "rulesCount": 340,
+      "handlesOS": "both"
+    },
+    {
+      "id": "mod-heuristics",
+      "name": "Behavioral Ransomware Shield",
+      "type": "BehavioralEngine",
+      "status": "active",
+      "description": "Heuristic detection of rapid entropy change in user documents, shadow-copy deletion blocking, and canary file traps.",
+      "rulesCount": 95,
+      "handlesOS": "both"
+    },
+    {
+      "id": "mod-net-filter",
+      "name": "Socket & Port Monitor",
+      "type": "NetworkFilter",
+      "status": "active",
+      "description": "Monitors outbound sockets for C2 beaconing IPs, reverse shells, and Browser Guard DeclarativeNetRequest filtering.",
+      "rulesCount": 85,
+      "handlesOS": "both"
+    },
+    {
+      "id": "mod-kernel-win",
+      "name": "Windows Ring-0 EDR & IOCTL Filter",
+      "type": "KernelDriver",
+      "status": "active",
+      "description": "Binary IOCTL 0x22A018 inspection (appid.sys BYOVD trap), NtSuspendProcess pre-exec freeze, and Unicode RLO blocker.",
+      "rulesCount": 18,
+      "handlesOS": "windows"
+    },
+    {
+      "id": "mod-ebpf-linux",
+      "name": "Linux fanotify & Sysctl Kernel Shield",
+      "type": "KernelDriver",
+      "status": "active",
+      "description": "Linux fanotify pre-exec hook (FAN_OPEN_EXEC_PERM), MPTCP sysctl hardening (CVE-2026-98432), and nf_tables LPE heuristics.",
+      "rulesCount": 24,
+      "handlesOS": "linux"
+    }
+  ],
+  "signatures": [
+    {
+      "id": "SIG-WIN-MIME-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-21413 Outlook Moniker / file:// Scheme Check",
+      "category": "Email / File Scheme",
+      "pattern": "file://.*!.*|outlook:.*|cve-2024-21413",
+      "mitigatesAttackVector": "Remote Code Execution",
+      "enabled": true
+    },
+    {
+      "id": "SIG-LIN-LOONEY-01",
+      "targetOS": "linux",
+      "name": "CVE-2023-4911 Looney Tunables GLIBC_TUNABLES Buffer Overflow",
+      "category": "Privilege Escalation",
+      "pattern": "GLIBC_TUNABLES=.*:.*:.*|cve-2023-4911",
+      "mitigatesAttackVector": "Local Privilege Escalation",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-LOLBIN-01",
+      "targetOS": "windows",
+      "name": "Certutil & PowerShell Encoded Download Traps",
+      "category": "Defense Evasion",
+      "pattern": "certutil.*-urlcache|powershell.*-enc",
+      "mitigatesAttackVector": "Command Injection",
+      "enabled": true
+    },
+    {
+      "id": "SIG-LIN-REVERSE-01",
+      "targetOS": "linux",
+      "name": "Bash & Python Interactive Reverse Shells",
+      "category": "Post-Exploitation",
+      "pattern": "bash -i >& /dev/tcp/|python.*pty.spawn",
+      "mitigatesAttackVector": "Remote Shell",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-MSHTML-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-43468 MSHTML Unicode RLO Masquerade Rule",
+      "category": "Sandbox Escape",
+      "pattern": "CVE-2024-43468",
+      "mitigatesAttackVector": "Sandbox Escape",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-NTLM-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-43451 Malicious URL/Theme NTLM Leak Rule",
+      "category": "Authentication Bypass",
+      "pattern": "CVE-2024-43451",
+      "mitigatesAttackVector": "Authentication Bypass",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-WIFI-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-30078 Windows Wi-Fi Beacon Payload Rule",
+      "category": "Network / RCE",
+      "pattern": "CVE-2024-30078",
+      "mitigatesAttackVector": "Network / RCE",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-IPV6-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-38063 IPv6 Packet Generator Rule",
+      "category": "Network / RCE",
+      "pattern": "CVE-2024-38063",
+      "mitigatesAttackVector": "Network / RCE",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-BYOVD-01",
+      "targetOS": "windows",
+      "name": "CVE-2024-21338 AppLocker Driver IOCTL 0x22a018 Hook Trap",
+      "category": "Kernel Exploitation",
+      "pattern": "CVE-2024-21338",
+      "mitigatesAttackVector": "Kernel Exploitation",
+      "enabled": true
+    },
+    {
+      "id": "SIG-LIN-NFT-01",
+      "targetOS": "linux",
+      "name": "CVE-2024-1086 nf_tables Namespace Allocation Probe",
+      "category": "Kernel Exploitation",
+      "pattern": "CVE-2024-1086",
+      "mitigatesAttackVector": "Kernel Exploitation",
+      "enabled": true
+    },
+    {
+      "id": "SIG-LIN-VERDICT-01",
+      "targetOS": "linux",
+      "name": "CVE-2024-26923 nf_tables Verdict Memory Corruption Rule",
+      "category": "Kernel Exploitation",
+      "pattern": "CVE-2024-26923",
+      "mitigatesAttackVector": "Kernel Exploitation",
+      "enabled": true
+    },
+    {
+      "id": "SIG-LIN-SSH-01",
+      "targetOS": "linux",
+      "name": "CVE-2024-6387 OpenSSH regreSSHion Timing Attack Rule",
+      "category": "Network / RCE",
+      "pattern": "CVE-2024-6387",
+      "mitigatesAttackVector": "Network / RCE",
+      "enabled": true
+    }
+  ]
+}
