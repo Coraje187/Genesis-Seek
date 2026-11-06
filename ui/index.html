@@ -142,7 +142,7 @@
         </div>
         <div>
           <div class="brand-title">GENESIS SEEK</div>
-          <div class="brand-sub">Enterprise v0.3.4</div>
+          <div class="brand-sub">Enterprise v0.3.5</div>
           <div class="brand-org" style="font-size:0.68rem;color:var(--accent-primary);letter-spacing:0.5px;font-weight:600;margin-top:2px;">Genesis Grid Labs</div>
         </div>
       </div>
@@ -207,7 +207,7 @@
         </div>
 
         <div class="sidebar-copyright-box">
-          <div class="copyright-version">Genesis Seek v0.3.4 Enterprise</div>
+          <div class="copyright-version">Genesis Seek v0.3.5 Enterprise</div>
           <div class="copyright-corp">© 2026 <strong>Genesis Grid Labs</strong></div>
           <div class="copyright-motto">Plug-and-Play AI & Security</div>
           <div class="copyright-link-row">
@@ -570,11 +570,11 @@
           <div class="panel-header">
             <div>
               <div style="display:flex;align-items:center;gap:10px;">
-                <h3>Linux Kernel Network &amp; MPTCP Exploit Shield</h3>
+                <h3>OS Kernel, Driver &amp; Attack-Surface Hardening Shield</h3>
                 <span id="kernel-status-badge" class="sev-badge sev-Critical">AUDITING KERNEL...</span>
               </div>
               <p class="muted small" style="margin-top:4px;">
-                Active defense against <strong>CVE-2026-98432</strong> (CVSS 9.8 Critical remote root execution in Linux Multipath TCP stack).
+                Active OS-level defense against <strong>Linux Kernel LPEs &amp; MPTCP (CVE-2026-98432, CVE-2024-1086, CVE-2024-26923, OpenAI 948 LPEs)</strong> and <strong>Windows Host/Driver Exploits (CVE-2024-43468, CVE-2024-21338, CVE-2024-43451)</strong>.
               </p>
             </div>
             <div style="display:flex;gap:8px;">
@@ -588,11 +588,11 @@
           <div class="hero-stats" style="margin-top:8px;">
             <div class="stat-box">
               <span class="stat-val" id="kernel-release-val" style="font-size:1.05rem;word-break:break-all;">Loading...</span>
-              <span class="stat-lbl">Linux Kernel Release</span>
+              <span class="stat-lbl">OS Kernel / Subsystem</span>
             </div>
             <div class="stat-box">
               <span class="stat-val" id="kernel-mptcp-state-val">Checking...</span>
-              <span class="stat-lbl">MPTCP Sysctl (<code>net.mptcp.enabled</code>)</span>
+              <span class="stat-lbl">Attack Surface State (Sysctl / Registry)</span>
             </div>
             <div class="stat-box">
               <span class="stat-val" id="kernel-cve-threat-val" style="color:var(--sev-high, #ef4444);">CVSS 9.8</span>
@@ -606,7 +606,7 @@
               Checking Linux kernel MPTCP subsystem status and attack surface exposure...
             </div>
             <div class="muted small" style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-subtle);display:flex;align-items:center;justify-content:space-between;">
-              <span><strong>Distro Recommendation:</strong> Run your system package manager update (<code>sudo pacman -Syu</code> or <code>sudo apt upgrade</code>) and reboot once patched.</span>
+              <span><strong>OS Update Recommendation:</strong> Keep Windows Update (Patch Tuesday KBs) or your Linux distro package manager (<code>sudo pacman -Syu</code> / <code>sudo apt upgrade</code>) enabled alongside Genesis Seek.</span>
               <span id="kernel-hardening-feedback" class="text-ok" style="font-weight:600;"></span>
             </div>
           </div>

@@ -899,7 +899,7 @@ pub fn spawn_browser_guard_bridge() {
                 }
                 http_json("200 OK", &serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
             } else {
-                http_json("200 OK", r#"{"service":"Genesis Seek Browser Guard Bridge","status":"active"}"#)
+                if target.starts_with("/sentinel-profile") { http_json("200 OK", include_str!("../../sentinel_profile.json")) } else { http_json("200 OK", r#"{"service":"Genesis Seek Browser Guard Bridge","status":"active","version":"v0.3.5 Enterprise","protection_health":100}"#) }
             };
             let _ = stream.write_all(response.as_bytes());
         }

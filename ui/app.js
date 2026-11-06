@@ -879,23 +879,23 @@ async function refreshKernelAudit() {
 
     if (releaseVal) releaseVal.textContent = audit.kernel_release || "Linux Kernel";
     if (mptcpStateVal) {
-      mptcpStateVal.textContent = audit.mptcp_enabled ? "Enabled (1)" : "Disabled (0)";
+      mptcpStateVal.textContent = audit.mptcp_enabled ? "Exposed (1)" : "Hardened (0)";
       mptcpStateVal.style.color = audit.mptcp_enabled ? "var(--sev-high, #ef4444)" : "var(--sev-safe, #10b981)";
     }
     if (advisoryTitle) advisoryTitle.textContent = audit.advisory_title;
     if (advisoryDesc) advisoryDesc.textContent = audit.advisory_details;
 
     if (statusBadge) {
-      statusBadge.textContent = audit.mptcp_enabled ? "EXPOSED • MPTCP ACTIVE" : "HARDENED • PROTECTED";
+      statusBadge.textContent = audit.mptcp_enabled ? "EXPOSED • ACTION NEEDED" : "HARDENED • PROTECTED";
       statusBadge.className = `sev-badge sev-${audit.severity}`;
     }
 
     if (toggleBtn) {
-      if (!audit.is_linux || !audit.mptcp_supported) {
+      if (!audit.mptcp_supported) {
         toggleBtn.style.display = "none";
       } else {
         toggleBtn.style.display = "inline-flex";
-        toggleBtn.textContent = audit.mptcp_enabled ? "🛡️ Harden Kernel (Disable MPTCP)" : "Re-Enable MPTCP";
+        toggleBtn.textContent = audit.mptcp_enabled ? "🛡️ 1-Click Harden Kernel / Host" : "✓ Kernel & Host Hardened";
         toggleBtn.style.background = audit.mptcp_enabled ? "#ef4444" : "";
         toggleBtn.style.borderColor = audit.mptcp_enabled ? "#ef4444" : "";
         toggleBtn.className = audit.mptcp_enabled ? "btn btn-primary" : "btn btn-outline";
