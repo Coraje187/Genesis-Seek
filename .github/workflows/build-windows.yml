@@ -122,12 +122,13 @@ jobs:
           if ls src-tauri/target/release/bundle/appimage/*.AppImage >/dev/null 2>&1; then
             RAW_APPIMAGE=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -n 1)
             chmod +x "$RAW_APPIMAGE"
-            # Extract and repack with xz -b 1048576 to keep size <80MB for <=v0.3.3 clients
+            # Extract, strip debug symbols, and repack with xz -b 1048576 to keep size well under 80MB for <=v0.3.3 clients
             "$RAW_APPIMAGE" --appimage-extract
+            find squashfs-root/usr/lib -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
             wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool || true
             if [ -f appimagetool ]; then
               chmod +x appimagetool
-              ARCH=x86_64 ./appimagetool --comp xz --mksquashfs-opt "-b" --mksquashfs-opt "1048576" --mksquashfs-opt "-Xdict-size" --mksquashfs-opt "100%" squashfs-root "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage" || cp "$RAW_APPIMAGE" "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
+              ARCH=x86_64 ./appimagetool --appimage-extract-and-run --comp xz --mksquashfs-opt "-b" --mksquashfs-opt "1048576" --mksquashfs-opt "-Xdict-size" --mksquashfs-opt "100%" squashfs-root "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage" || cp "$RAW_APPIMAGE" "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
               rm -rf squashfs-root appimagetool
             else
               cp "$RAW_APPIMAGE" "./Genesis-Seek-${CLEAN_VER}-x86_64.AppImage"
