@@ -1047,32 +1047,18 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
 
         #[cfg(not(target_os = "windows"))]
         {
-            let is_running_appimage = std::env::var_os("APPIMAGE").is_some();
-            if is_running_appimage {
-                // If running from an AppImage, match .AppImage first
-                for a in assets {
-                    let name = a["name"].as_str().unwrap_or("");
-                    let url = a["browser_download_url"].as_str().unwrap_or("");
-                    let size = a["size"].as_u64().unwrap_or(0);
-                    if name.ends_with(".AppImage") {
-                        asset_name = name.to_string();
-                        download_url = url.to_string();
-                        asset_size = size;
-                        break;
-                    }
-                }
-            } else {
-                // If running standalone raw binary, match standalone Linux binary first
-                for a in assets {
-                    let name = a["name"].as_str().unwrap_or("");
-                    let url = a["browser_download_url"].as_str().unwrap_or("");
-                    let size = a["size"].as_u64().unwrap_or(0);
-                    if name == "genesis-seek" || name.starts_with("genesis-seek-linux") {
-                        asset_name = name.to_string();
-                        download_url = url.to_string();
-                        asset_size = size;
-                        break;
-                    }
+            // Prefer the self-contained standalone ELF binary (genesis-seek-linux-x86_64, ~12 MB)
+            // because Tauri v2 embeds all UI/icons/YARA assets directly in the ELF and it runs
+            // without requiring libfuse.so.2 or /tmp FUSE mounts even when saved to an .AppImage path.
+            for a in assets {
+                let name = a["name"].as_str().unwrap_or("");
+                let url = a["browser_download_url"].as_str().unwrap_or("");
+                let size = a["size"].as_u64().unwrap_or(0);
+                if name == "genesis-seek" || name.starts_with("genesis-seek-linux") {
+                    asset_name = name.to_string();
+                    download_url = url.to_string();
+                    asset_size = size;
+                    break;
                 }
             }
             if download_url.is_empty() {
@@ -1080,7 +1066,7 @@ pub fn check_github_update() -> Result<AppUpdateInfo, String> {
                     let name = a["name"].as_str().unwrap_or("");
                     let url = a["browser_download_url"].as_str().unwrap_or("");
                     let size = a["size"].as_u64().unwrap_or(0);
-                    if name.ends_with(".AppImage") || name == "genesis-seek" || name.starts_with("genesis-seek-linux") {
+                    if name.ends_with(".AppImage") {
                         asset_name = name.to_string();
                         download_url = url.to_string();
                         asset_size = size;
@@ -1223,11 +1209,14 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
                 "Restarting into new build",
             );
 
-            // Spawn the newly written executable and exit current process after a short delay
+            // Spawn the newly written executable with --after-update and exit current process immediately
+            // so the single-instance lock is released before the new process initializes.
             let exe_clone = current_exe.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(1200));
-                let _ = std::process::Command::new(&exe_clone).spawn();
+                std::thread::sleep(Duration::from_millis(400));
+                let _ = std::process::Command::new(&exe_clone)
+                    .arg("--after-update")
+                    .spawn();
                 std::process::exit(0);
             });
 
@@ -1250,7 +1239,15 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
         fs::write(&dl_target, &bytes)
             .map_err(|e| format!("Failed to save update to Downloads: {}", e))?;
 
-        let _ = std::process::Command::new(&dl_target).spawn();
+        let dl_clone = dl_target.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            let _ = std::process::Command::new(&dl_clone)
+                .arg("--after-update")
+                .spawn();
+            std::process::exit(0);
+        });
+
         return Ok(AppUpdateInstallResult {
             success: true,
             restarted: true,
@@ -1315,52 +1312,135 @@ pub fn install_github_update() -> Result<AppUpdateInstallResult, String> {
                 return Err("Downloaded file is not a valid Linux ELF/AppImage binary.".to_string());
             }
 
-            let target_bin = std::env::var_os("APPIMAGE")
+            let raw_target = std::env::var_os("APPIMAGE")
                 .map(PathBuf::from)
                 .or_else(|| std::env::current_exe().ok())
                 .ok_or_else(|| "Cannot determine current Linux binary path".to_string())?;
 
-            let staged = target_bin.with_extension("new");
-            if fs::write(&staged, &bytes).is_ok() {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755));
-                }
-                let old_bak = target_bin.with_extension("old");
-                let _ = fs::remove_file(&old_bak);
-                let _ = fs::rename(&target_bin, &old_bak);
-
-                if fs::rename(&staged, &target_bin).is_ok() {
-                    realtime_shield::log_security_event(
-                        "System Updater",
-                        "Info",
-                        &format!("Updated Genesis Seek to {}", info.latest_version),
-                        &target_bin.to_string_lossy(),
-                        "Restarting into new build",
-                    );
-
-                    let bin_clone = target_bin.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(1200));
-                        let _ = std::process::Command::new(&bin_clone).spawn();
-                        std::process::exit(0);
-                    });
-
-                    return Ok(AppUpdateInstallResult {
-                        success: true,
-                        restarted: true,
-                        installed_version: info.latest_version.clone(),
-                        saved_path: target_bin.to_string_lossy().to_string(),
-                        message: format!(
-                            "Genesis Seek {} installed! Restarting application now...",
-                            info.latest_version
-                        ),
-                    });
+            // Never overwrite a temporary /tmp/ extracted AppImage path that disappears on exit!
+            let target_bin = if raw_target.to_string_lossy().starts_with("/tmp/") {
+                if let Some(home) = dirs::home_dir() {
+                    let dl_appimage = home.join("Downloads/Genesis-Seek-x86_64.AppImage");
+                    if is_appimage && dl_appimage.exists() {
+                        dl_appimage
+                    } else {
+                        let local_bin_dir = home.join(".local/bin");
+                        let _ = fs::create_dir_all(&local_bin_dir);
+                        local_bin_dir.join("genesis-seek")
+                    }
                 } else {
-                    // Roll back if rename failed
-                    let _ = fs::rename(&old_bak, &target_bin);
+                    raw_target
                 }
+            } else {
+                raw_target
+            };
+
+            let staged = target_bin.with_extension("new");
+            fs::write(&staged, &bytes)
+                .map_err(|e| format!("Failed to stage update binary at {}: {}", staged.display(), e))?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755));
+            }
+
+            // Pre-flight verification: ensure the downloaded binary can execute on this host OS
+            // before we touch the user's working installation.
+            if let Ok(output) = std::process::Command::new(&staged)
+                .arg("--self-test")
+                .env("APPIMAGE_EXTRACT_AND_RUN", "1")
+                .env_remove("LD_LIBRARY_PATH")
+                .env_remove("APPDIR")
+                .env_remove("APPIMAGE")
+                .env_remove("ARGV0")
+                .env_remove("OWD")
+                .output()
+            {
+                if !output.status.success() {
+                    let _ = fs::remove_file(&staged);
+                    return Err(
+                        "Downloaded update failed pre-flight verification (--self-test). Your current installation was kept intact."
+                            .to_string(),
+                    );
+                }
+            }
+
+            let old_bak = target_bin.with_extension("old");
+            let _ = fs::remove_file(&old_bak);
+            let _ = fs::rename(&target_bin, &old_bak);
+
+            if fs::rename(&staged, &target_bin).is_ok() {
+                let _ = fs::remove_file(&old_bak);
+
+                // Also keep ~/.local/bin/genesis-seek synced if it exists and differs from target_bin
+                if let Some(home) = dirs::home_dir() {
+                    let local_bin = home.join(".local/bin/genesis-seek");
+                    if local_bin.exists() && local_bin != target_bin {
+                        let local_staged = local_bin.with_extension("new");
+                        if fs::copy(&target_bin, &local_staged).is_ok() {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                let _ = fs::set_permissions(&local_staged, fs::Permissions::from_mode(0o755));
+                            }
+                            let _ = fs::rename(&local_staged, &local_bin);
+                        }
+                    }
+                }
+
+                realtime_shield::log_security_event(
+                    "System Updater",
+                    "Info",
+                    &format!("Updated Genesis Seek to {}", info.latest_version),
+                    &target_bin.to_string_lossy(),
+                    "Restarting into new build",
+                );
+
+                let bin_clone = target_bin.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(400));
+                    // Launch via detached shell after a 1s delay and exit immediately so the
+                    // single-instance socket is 100% released before the new binary starts.
+                    let spawned = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg("sleep 1 && exec \"$1\" --after-update >/dev/null 2>&1 &")
+                        .arg("sh")
+                        .arg(&bin_clone)
+                        .env("APPIMAGE_EXTRACT_AND_RUN", "1")
+                        .env_remove("LD_LIBRARY_PATH")
+                        .env_remove("APPDIR")
+                        .env_remove("APPIMAGE")
+                        .env_remove("ARGV0")
+                        .env_remove("OWD")
+                        .spawn();
+                    if spawned.is_err() {
+                        let _ = std::process::Command::new(&bin_clone)
+                            .arg("--after-update")
+                            .env("APPIMAGE_EXTRACT_AND_RUN", "1")
+                            .env_remove("LD_LIBRARY_PATH")
+                            .env_remove("APPDIR")
+                            .env_remove("APPIMAGE")
+                            .spawn();
+                    }
+                    std::process::exit(0);
+                });
+
+                return Ok(AppUpdateInstallResult {
+                    success: true,
+                    restarted: true,
+                    installed_version: info.latest_version.clone(),
+                    saved_path: target_bin.to_string_lossy().to_string(),
+                    message: format!(
+                        "Genesis Seek {} verified and installed! Restarting application now...",
+                        info.latest_version
+                    ),
+                });
+            } else {
+                // Roll back if rename failed
+                let _ = fs::rename(&old_bak, &target_bin);
+                let _ = fs::remove_file(&staged);
+                return Err("Failed to replace binary in-place; rolled back to previous executable.".to_string());
             }
         }
 

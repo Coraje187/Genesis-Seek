@@ -428,12 +428,39 @@ fn ensure_linux_autostart_configured() {
         None => return,
     };
 
-    let exe_path = if let Ok(appimage) = std::env::var("APPIMAGE") {
-        PathBuf::from(appimage)
+    let local_bin_dir = home.join(".local/bin");
+    let local_bin_path = local_bin_dir.join("genesis-seek");
+
+    let raw_exe_path = if let Ok(appimage) = std::env::var("APPIMAGE") {
+        let p = PathBuf::from(appimage);
+        if p.to_string_lossy().starts_with("/tmp/") {
+            std::env::current_exe().unwrap_or(p)
+        } else {
+            p
+        }
     } else if let Ok(current) = std::env::current_exe() {
         current
     } else {
-        PathBuf::from("/usr/local/bin/genesis-seek")
+        local_bin_path.clone()
+    };
+
+    // Never allow a temporary /tmp/ extracted AppImage path to be written into .desktop or systemd!
+    let exe_path = if raw_exe_path.to_string_lossy().starts_with("/tmp/") {
+        let _ = fs::create_dir_all(&local_bin_dir);
+        if let Ok(cur) = std::env::current_exe() {
+            let staged = local_bin_path.with_extension("tmp");
+            if fs::copy(&cur, &staged).is_ok() {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&staged, fs::Permissions::from_mode(0o755));
+                }
+                let _ = fs::rename(&staged, &local_bin_path);
+            }
+        }
+        local_bin_path
+    } else {
+        raw_exe_path
     };
 
     let exe_str = exe_path.to_string_lossy().to_string();
@@ -446,7 +473,7 @@ fn ensure_linux_autostart_configured() {
         Type=Application\n\
         Name=Genesis Seek\n\
         Comment=Endpoint Threat Defense & Browser Guard\n\
-        Exec=\"{}\"\n\
+        Exec=env APPIMAGE_EXTRACT_AND_RUN=1 \"{}\"\n\
         Icon=genesis-seek\n\
         Terminal=false\n\
         Categories=Utility;Security;System;\n\
@@ -475,7 +502,7 @@ fn ensure_linux_autostart_configured() {
             [Service]\n\
             Type=simple\n\
             ExecStart=\"{}\" --minimized\n\
-            Restart=always\n\
+            Restart=on-failure\n\
             RestartSec=5\n\
             Environment=\"WEBKIT_DISABLE_DMABUF_RENDERER=1\"\n\
             Environment=\"WEBKIT_DISABLE_COMPOSITING_MODE=1\"\n\
@@ -485,7 +512,8 @@ fn ensure_linux_autostart_configured() {
             exe_str
         );
         let service_file = systemd_dir.join("genesis-seek.service");
-        if !service_file.exists() {
+        let existing = fs::read_to_string(&service_file).unwrap_or_default();
+        if existing != service_content {
             let _ = fs::write(&service_file, service_content);
             let _ = std::process::Command::new("systemctl")
                 .args(["--user", "daemon-reload"])
@@ -506,7 +534,7 @@ fn ensure_linux_autostart_configured() {
             Type=Application\n\
             Name=Genesis Seek\n\
             Comment=Endpoint Threat Defense & Browser Guard (Background Shield)\n\
-            Exec=\"{}\" --minimized\n\
+            Exec=env APPIMAGE_EXTRACT_AND_RUN=1 \"{}\" --minimized\n\
             Icon=genesis-seek\n\
             Terminal=false\n\
             Categories=Utility;Security;System;\n\
@@ -541,6 +569,11 @@ fn ensure_windows_autostart_configured() {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--self-test" || a == "--version") {
+        println!("genesis-seek {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     #[cfg(unix)]
     unsafe {
         extern "C" {
@@ -552,6 +585,12 @@ fn main() {
     if std::env::args().any(|a| a == "--inject-firefox") {
         extension_installer::inject_firefox_cli_loop();
         return;
+    }
+
+    // When relaunched by the 1-Click Updater (--after-update), wait briefly before acquiring
+    // the single-instance lock so the exiting parent process has completely released it.
+    if std::env::args().any(|a| a == "--after-update") {
+        std::thread::sleep(std::time::Duration::from_millis(1800));
     }
 
     #[cfg(target_os = "linux")]
