@@ -1405,12 +1405,79 @@ async function refreshLiveMemory() {
     await refreshQuarantine();
   } catch (e) {}
 
-  if (window.__TAURI__ && window.__TAURI__.event) {
-    window.__TAURI__.event.listen("threat-alert-data", async () => {
+  let activeAlertPayload = null;
+  const alertBannerEl = document.getElementById("interactive-threat-alert-banner");
+
+  function showInAppThreatAlert(data) {
+    if (!alertBannerEl || !data || !data.file_path) return;
+    activeAlertPayload = data;
+    const titleEl = document.getElementById("inapp-alert-title");
+    const badgeEl = document.getElementById("inapp-alert-badge");
+    const pathEl = document.getElementById("inapp-alert-path");
+    const descEl = document.getElementById("inapp-alert-desc");
+    if (titleEl) titleEl.textContent = data.threat_name || "Threat Notice";
+    if (badgeEl) badgeEl.textContent = data.category || data.severity || "Notice";
+    if (pathEl) {
+      pathEl.textContent = data.file_path;
+      pathEl.title = data.file_path;
+    }
+    if (descEl) descEl.textContent = data.description || "";
+    alertBannerEl.style.display = "flex";
+  }
+
+  function hideInAppThreatAlert() {
+    activeAlertPayload = null;
+    if (alertBannerEl) alertBannerEl.style.display = "none";
+  }
+
+  document.getElementById("btn-inapp-alert-allow")?.addEventListener("click", async () => {
+    if (activeAlertPayload && activeAlertPayload.file_path) {
       try {
+        await invokeBackend("allowlist_and_trust_threat", {
+          filePath: activeAlertPayload.file_path,
+          sha256: activeAlertPayload.sha256 || "",
+        });
+      } catch (e) {}
+    }
+    hideInAppThreatAlert();
+    await refreshEvents();
+  });
+
+  document.getElementById("btn-inapp-alert-quarantine")?.addEventListener("click", async () => {
+    if (activeAlertPayload && activeAlertPayload.file_path) {
+      try {
+        await invokeBackend("quarantine_threat_file", {
+          filePath: activeAlertPayload.file_path,
+          threatName: activeAlertPayload.threat_name || "Detected Threat",
+          severity: activeAlertPayload.severity || "High",
+          sha256: activeAlertPayload.sha256 || "",
+        });
+      } catch (e) {}
+    }
+    hideInAppThreatAlert();
+    await refreshQuarantine();
+    await refreshEvents();
+  });
+
+  document.getElementById("btn-inapp-alert-dismiss")?.addEventListener("click", async () => {
+    try {
+      await invokeBackend("dismiss_threat_alert");
+    } catch (e) {}
+    hideInAppThreatAlert();
+  });
+
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    window.__TAURI__.event.listen("threat-alert-data", async (event) => {
+      try {
+        if (event && event.payload) {
+          showInAppThreatAlert(event.payload);
+        }
         await refreshEvents();
         await refreshQuarantine();
       } catch (e) {}
+    });
+    window.__TAURI__.event.listen("threat-alert-dismissed", () => {
+      hideInAppThreatAlert();
     });
   }
 

@@ -300,9 +300,7 @@ fn ensure_default_yara_files(rules_dir: &Path) {
     ];
     for (filename, contents) in &bundled_files {
         let target = rules_dir.join(filename);
-        if !target.exists() || *filename == "cve_sentinel_heuristics.yar" {
-            let _ = fs::write(target, contents.trim());
-        }
+        let _ = fs::write(target, contents.trim());
     }
 
     // Copy any additional custom .yar rule files from relative rules folders
@@ -878,7 +876,14 @@ pub fn is_excluded_path(path: &Path) -> bool {
         || s.contains(".mount_Genes")
         || s.contains(".mount_genesis")
         || s.contains("/.mount_")
-        || (s.contains("genesis-seek") || s.contains("Genesis-Seek")) && (s.contains("/rules/") || s.contains("\\rules\\"))
+        || s.contains("/.gemini/")
+        || s.contains("/.cache/")
+        || s.contains("/.mozilla/")
+        || s.contains("/Antigravity/")
+        || s.contains("/node_modules/")
+        || s.contains("/.config/genesis-seek/")
+        || ((s.contains("genesis-seek") || s.contains("Genesis-Seek"))
+            && (s.contains("/rules/") || s.contains("\\rules\\") || s.contains("/target/")))
     {
         return true;
     }

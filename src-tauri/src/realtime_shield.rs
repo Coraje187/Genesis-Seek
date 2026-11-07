@@ -517,9 +517,6 @@ pub fn spawn_realtime_file_watcher() {
         if let Some(dt) = dirs::desktop_dir() {
             watch_dirs.push(dt);
         }
-        if let Some(cfg) = dirs::config_dir() {
-            watch_dirs.push(cfg);
-        }
         watch_dirs.push(std::env::temp_dir());
 
         #[cfg(target_os = "windows")]
@@ -556,8 +553,9 @@ pub fn spawn_realtime_file_watcher() {
             "Monitoring",
         );
 
-        // Paths we already acted on, to avoid duplicate events from bursts of Modify notifications.
+        // Paths and hashes we already acted on, to avoid duplicate events from bursts of Modify notifications.
         let mut recently_handled: HashMap<PathBuf, Instant> = HashMap::new();
+        let mut alerted_hashes: HashSet<String> = HashSet::new();
 
         for res in rx {
             let Ok(Event { kind: EventKind::Create(_) | EventKind::Modify(_), paths, .. }) = res else {
@@ -567,7 +565,7 @@ pub fn spawn_realtime_file_watcher() {
             if !shields.real_time_file_guard {
                 continue;
             }
-            recently_handled.retain(|_, t| t.elapsed() < Duration::from_secs(5));
+            recently_handled.retain(|_, t| t.elapsed() < Duration::from_secs(60));
 
             for path in paths {
                 if scanner::is_excluded_path(&path) || !path.is_file() || recently_handled.contains_key(&path) {
@@ -582,23 +580,30 @@ pub fn spawn_realtime_file_watcher() {
 
                 let is_riskware = det.threat_name.contains("RiskWare") || det.category.contains("RiskWare");
 
-                // RiskWare / Game Cracks / Non-destructive items: always prompt with sleek interactive alert!
+                // RiskWare / Game Cracks / Non-destructive items: prompt once per SHA-256 with interactive alert
                 if is_riskware || !shields.auto_quarantine_realtime || !is_auto_quarantine_severity(&det.severity) {
-                    crate::threat_alert::trigger_threat_alert(&det);
-                    log_security_event(
-                        "File Guard",
-                        &det.severity,
-                        &format!("Real-Time Notice: {}", det.threat_name),
-                        &det.file_path,
-                        "Interactive Alert Triggered (Quarantine or Allow)",
-                    );
-                    crate::tray_indicator::notify_tray_updated();
+                    if alerted_hashes.insert(det.sha256.clone()) {
+                        crate::threat_alert::trigger_threat_alert(&det);
+                        log_security_event(
+                            "File Guard",
+                            &det.severity,
+                            &format!("Real-Time Notice: {}", det.threat_name),
+                            &det.file_path,
+                            "Interactive Alert Triggered (Quarantine or Allow)",
+                        );
+                        crate::tray_indicator::notify_tray_updated();
+                    }
                     continue;
                 }
 
                 let action = match quarantine::quarantine_file(&det.file_path, &det.threat_name, &det.severity, &det.sha256) {
                     Ok(_) => "Auto-Quarantined (.gvault)".to_string(),
-                    Err(e) => format!("Detected (quarantine failed: {})", e),
+                    Err(e) => {
+                        if alerted_hashes.insert(det.sha256.clone()) {
+                            crate::threat_alert::trigger_threat_alert(&det);
+                        }
+                        format!("Detected (quarantine failed: {})", e)
+                    }
                 };
 
                 log_security_event(
@@ -608,7 +613,6 @@ pub fn spawn_realtime_file_watcher() {
                     &det.file_path,
                     &action,
                 );
-                crate::threat_alert::trigger_threat_alert(&det);
                 crate::tray_indicator::notify_tray_updated();
             }
         }

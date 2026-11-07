@@ -57,22 +57,8 @@ pub fn trigger_threat_alert(det: &ThreatDetection) {
 
     if let Ok(g) = ALERT_APP.lock() {
         if let Some(app) = g.as_ref() {
-            // 1. Emit to main window if open
+            // Emit to main dashboard window (in-app interactive banner)
             let _ = app.emit("threat-alert-data", &alert_data);
-
-            // 2. Display dedicated floating alert window
-            if let Some(alert_win) = app.get_webview_window("alert-window") {
-                if let Ok(Some(mon)) = alert_win.current_monitor() {
-                    let size = mon.size();
-                    let scale = mon.scale_factor();
-                    let x = (size.width as f64 / scale) - 500.0;
-                    let y = (size.height as f64 / scale) - 300.0;
-                    let _ = alert_win.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
-                }
-                let _ = alert_win.emit("threat-alert-data", &alert_data);
-                let _ = alert_win.show();
-                let _ = alert_win.set_focus();
-            }
         }
     }
 }
@@ -136,10 +122,14 @@ pub fn quarantine_threat_file(
 
 #[tauri::command]
 pub fn dismiss_threat_alert() -> Result<(), String> {
+    if let Ok(mut pending) = PENDING_ALERT.lock() {
+        *pending = None;
+    }
     if let Ok(g) = ALERT_APP.lock() {
         if let Some(app) = g.as_ref() {
+            let _ = app.emit("threat-alert-dismissed", ());
             if let Some(alert_win) = app.get_webview_window("alert-window") {
-                let _ = alert_win.hide();
+                let _ = alert_win.close();
             }
         }
     }

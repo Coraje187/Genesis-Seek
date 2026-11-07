@@ -9,12 +9,9 @@ rule RiskWare_GameRepack_FitGirl_Installer {
         $s2 = "fitgirl-repacks.site" nocase
         $s3 = "cls-magic2_x64.dll" nocase
         $s4 = "cls-lolz_x64.dll" nocase
-        $s5 = "cls-srep_x64.dll" nocase
-        $s6 = "cls-zstd_x64.dll" nocase
-        $s7 = "FitGirl-Repack" nocase
-        $s8 = "DRIVECLUB" nocase
+        $s5 = "FitGirl-Repack" nocase
     condition:
-        ($s1 or $s2 or $s7) or (2 of ($s3, $s4, $s5, $s6))
+        any of them
 }
 
 rule RiskWare_GameRepack_Generic_Installer {
@@ -24,14 +21,10 @@ rule RiskWare_GameRepack_Generic_Installer {
         category = "RiskWare / Game Repack"
         severity = "Medium"
     strings:
-        $u1 = "ISDone.dll" nocase
-        $u2 = "unarc.dll" nocase
-        $u3 = "Unpack error" nocase
-        $u4 = "Decompression failed" nocase
         $dodi = "DODI-Repack" nocase
         $dodi2 = "dodi-repacks.site" nocase
     condition:
-        ($dodi or $dodi2) or ($u1 and $u2 and ($u3 or $u4))
+        any of them
 }
 
 rule RiskWare_Crack_Steam_DRM_Emulator {
@@ -42,12 +35,8 @@ rule RiskWare_Crack_Steam_DRM_Emulator {
         severity = "Medium"
     strings:
         $emu1 = "steam_emu.ini" nocase
-        $emu2 = "steam_interfaces.txt" nocase
         $goldberg = "Goldberg Steam Emulator" nocase
         $codex = "CODEX64.dll" nocase
-        $rune = "RUNE.ini" nocase
-        $flt = "FLT.ini" nocase
-        $ali = "ALI213.ini" nocase
     condition:
         any of them
 }
@@ -59,12 +48,9 @@ rule RiskWare_Crack_Keygen_Patcher {
         category = "RiskWare / HackTool"
         severity = "Medium"
     strings:
-        $k1 = "Keygen" nocase
-        $k2 = "Crack / Patch" nocase
-        $k3 = "Generate License" nocase
         $k4 = "X-Force 202" nocase
-        $k5 = "KMSAuto" nocase
+        $k5 = "KMSAuto.Net" nocase
         $k6 = "KMSPico" nocase
     condition:
-        2 of them
+        any of them
 }
