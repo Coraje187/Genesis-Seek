@@ -127,16 +127,15 @@ jobs:
             find squashfs-root/usr/lib -type f -name "*.so*" -exec strip --strip-unneeded {} + 2>/dev/null || true
             if [ -f squashfs-root/AppRun ] && [ ! -L squashfs-root/AppRun ]; then
               mv squashfs-root/AppRun squashfs-root/AppRun.orig
-              cat << 'EOF' > squashfs-root/AppRun
-#!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"
-export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"
-if ! ldd "$HERE/usr/bin/genesis-seek" 2>/dev/null | grep -q "not found"; then
-  exec "$HERE/usr/bin/genesis-seek" "$@"
-fi
-exec "$HERE/AppRun.orig" "$@"
-EOF
+              printf '%s\n' \
+                '#!/bin/sh' \
+                'HERE="$(dirname "$(readlink -f "$0")")"' \
+                'export WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}"' \
+                'export WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}"' \
+                'if ! ldd "$HERE/usr/bin/genesis-seek" 2>/dev/null | grep -q "not found"; then' \
+                '  exec "$HERE/usr/bin/genesis-seek" "$@"' \
+                'fi' \
+                'exec "$HERE/AppRun.orig" "$@"' > squashfs-root/AppRun
               chmod +x squashfs-root/AppRun
             fi
             wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O appimagetool || true
