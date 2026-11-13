@@ -122,7 +122,7 @@ fn write_browser_manifest(target_dir: &Path, is_firefox: bool) {
   "browser_specific_settings": {
     "gecko": {
       "id": "browser-guard@genesisseek.io",
-      "strict_min_version": "109.0",
+      "strict_min_version": "115.0",
       "data_collection_permissions": {
         "required": [
           "none"
