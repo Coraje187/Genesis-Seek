@@ -1,8 +1,8 @@
 {
   "name": "Genesis-Seek",
   "repoUrl": "https://github.com/Coraje187/Genesis-Seek",
-  "version": "v0.3.5 Enterprise",
-  "lastUpdated": "2026-11-06",
+  "version": "v0.3.6 Enterprise",
+  "lastUpdated": "2026-11-13",
   "modules": [
     {
       "id": "mod-file-scan",
@@ -166,6 +166,15 @@
       "category": "Network / RCE",
       "pattern": "CVE-2024-6387",
       "mitigatesAttackVector": "Network / RCE",
+      "enabled": true
+    },
+    {
+      "id": "SIG-WIN-OUTLOOK-02",
+      "targetOS": "windows",
+      "name": "CVE-2026-124194 Outlook Missing User Interaction / NTLM Spoofing Rule",
+      "category": "Credential Access",
+      "pattern": "PidLidReminderFileParameter|\\\\.*\\\\.*\\.msg|cve-2026-124194",
+      "mitigatesAttackVector": "Remote Code Execution",
       "enabled": true
     }
   ]

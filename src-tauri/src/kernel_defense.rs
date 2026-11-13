@@ -176,8 +176,8 @@ pub fn audit_linux_kernel_mptcp() -> LinuxKernelAudit {
                 mptcp_enabled: false,
                 vulnerability_status: "Hardened & Protected (Win32 Pre-Exec, IOCTL & Extension Shields Active)".into(),
                 severity: "Safe".into(),
-                advisory_title: "Windows Host & Kernel Boundary Hardened (CVE-2024-43468 / CVE-2024-21338 / CVE-2024-43451)".into(),
-                advisory_details: "Windows Explorer extension masquerade protection (HideFileExt=0), appid.sys BYOVD raw IOCTL 0x22A018 inspection, Unicode RLO blocking, .url NTLM leak prevention, and NtSuspendProcess pre-execution thread freezing are all active.".into(),
+                advisory_title: "Windows Host & Kernel Boundary Hardened (CVE-2024-43468 / CVE-2024-21338 / CVE-2024-43451 / CVE-2026-124194)".into(),
+                advisory_details: "Windows Explorer extension masquerade protection (HideFileExt=0), appid.sys BYOVD raw IOCTL 0x22A018 inspection, Unicode RLO blocking, .url/.msg/.eml NTLM leak prevention (CVE-2026-124194), and NtSuspendProcess pre-execution thread freezing are all active.".into(),
                 mitigation_command: "Protected".into(),
                 can_mitigate: true,
             }

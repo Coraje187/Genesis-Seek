@@ -537,6 +537,7 @@ fn is_content_scannable(path: &Path, head: &[u8]) -> bool {
         "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" | "vbs" | "vbe" | "js" | "jse"
             | "hta" | "wsf" | "py" | "pl" | "desktop" | "service" | "exe" | "dll" | "scr"
             | "com" | "so" | "appimage" | "elf" | "bin" | "url" | "theme" | "website"
+            | "msg" | "eml" | "oft" | "rtf"
     )
 }
 

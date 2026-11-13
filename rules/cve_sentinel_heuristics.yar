@@ -124,3 +124,15 @@ rule Genesis_Looney_Tunables_CVE_2023_4911 {
     condition:
         any of them
 }
+
+rule Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2026_124194 {
+    meta:
+        cve = "CVE-2026-124194"
+        category = "CredentialAccess.OutlookSpoof"
+        severity = "High"
+        description = "Detects crafted Outlook message files (.msg/.eml/.oft) or payloads triggering unprompted remote UNC/SMB/WebDAV NTLMv2 leaks"
+    strings:
+        $re = /((PidLidReminderFileParameter|__substg1\.0_|Content-Type:\s*message\x2frfc822|X-Unsent:\s*1).{0,800}(file:\x2f\x2f\x2f?\\\\[^\s"'>]+|\\\\[0-9a-zA-Z._-]+\\[^\s"'>]+|outlook:[^\s"'>]+)|cve[-_]2026[-_]124194)/is
+    condition:
+        any of them
+}
