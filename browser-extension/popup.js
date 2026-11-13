@@ -54,12 +54,66 @@
   }
 
   try {
-    const r = await fetch("http://127.0.0.1:49152/");
+    const r = await fetch("http://127.0.0.1:49152/status", {
+      headers: { "X-Genesis-Seek-Client": "BrowserGuard" }
+    });
     if (r.ok) {
       bridgeEl.textContent = "Connected (127.0.0.1:49152)";
       bridgeEl.style.color = "var(--ok)";
     }
   } catch {
     bridgeEl.textContent = "Standalone Heuristics Mode";
+  }
+
+  // Handle update banner
+  const updateBanner = document.getElementById("update-banner");
+  const updateVerLabel = document.getElementById("update-ver-label");
+  const updateLink = document.getElementById("update-link");
+  const updateDismiss = document.getElementById("dismiss-update-btn");
+  const manualCheck = document.getElementById("manual-update-check");
+
+  function applyUpdateInfo(info) {
+    if (info && info.updateAvailable) {
+      updateVerLabel.textContent = `v${info.latestVersion}`;
+      if (info.updateUrl) {
+        updateLink.href = info.updateUrl;
+      }
+      updateBanner.style.display = "block";
+    } else {
+      updateBanner.style.display = "none";
+    }
+  }
+
+  // 1. Read stored update status
+  try {
+    const storedUpdate = await chrome.storage.local.get("update_info");
+    if (storedUpdate && storedUpdate.update_info) {
+      applyUpdateInfo(storedUpdate.update_info);
+    }
+  } catch {}
+
+  // 2. Dismiss button
+  if (updateDismiss) {
+    updateDismiss.addEventListener("click", () => {
+      updateBanner.style.display = "none";
+    });
+  }
+
+  // 3. Manual update check link
+  if (manualCheck) {
+    manualCheck.addEventListener("click", (e) => {
+      e.preventDefault();
+      manualCheck.textContent = "Checking...";
+      chrome.runtime.sendMessage({ action: "CHECK_FOR_UPDATE" }, (res) => {
+        manualCheck.textContent = "Check Update";
+        if (res) {
+          applyUpdateInfo(res);
+          if (!res.updateAvailable) {
+            manualCheck.textContent = "Up to date ✓";
+            setTimeout(() => { manualCheck.textContent = "Check Update"; }, 3000);
+          }
+        }
+      });
+    });
   }
 })();

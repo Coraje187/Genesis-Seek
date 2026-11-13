@@ -13,6 +13,10 @@
       --muted: #94a3b8;
       --accent: #00e5ff;
       --ok: #10b981;
+      --warn: #f59e0b;
+      --banner-bg: rgba(0, 229, 255, 0.12);
+      --banner-btn: #00e5ff;
+      --banner-btn-text: #000;
     }
     html[data-theme="cream"] {
       --bg: #f7f3e9;
@@ -22,6 +26,10 @@
       --muted: #686054;
       --accent: #8c6528;
       --ok: #0d9488;
+      --warn: #d97706;
+      --banner-bg: rgba(140, 101, 40, 0.12);
+      --banner-btn: #8c6528;
+      --banner-btn-text: #fff;
     }
     body {
       width: 330px;
@@ -68,6 +76,74 @@
       padding: 12px;
       margin-bottom: 10px;
     }
+    .update-banner {
+      background: var(--banner-bg);
+      border: 1px solid var(--accent);
+      border-radius: 9px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      display: none;
+    }
+    .update-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .update-tag {
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .update-ver {
+      font-size: 0.72rem;
+      font-weight: 700;
+      background: rgba(0, 229, 255, 0.2);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .update-msg {
+      font-size: 0.74rem;
+      color: var(--text);
+      margin-bottom: 8px;
+      line-height: 1.35;
+    }
+    .update-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .update-btn {
+      background: var(--banner-btn);
+      color: var(--banner-btn-text);
+      text-decoration: none;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 5px;
+      display: inline-block;
+      cursor: pointer;
+      border: none;
+    }
+    .update-btn:hover {
+      opacity: 0.9;
+    }
+    .dismiss-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .dismiss-btn:hover {
+      color: var(--text);
+    }
     .domain {
       font-weight: 700;
       font-size: 0.94rem;
@@ -94,6 +170,20 @@
     </div>
     <button id="popup-theme-toggle" class="theme-btn" title="Switch Night / Cream Light Theme">☀️ Cream</button>
   </div>
+
+  <!-- Update Available Banner -->
+  <div id="update-banner" class="update-banner">
+    <div class="update-row">
+      <span class="update-tag">🚀 NEW UPDATE READY</span>
+      <span id="update-ver-label" class="update-ver">v0.3.7</span>
+    </div>
+    <div id="update-msg" class="update-msg">A new security update for Genesis Seek Browser Guard is available.</div>
+    <div class="update-actions">
+      <a id="update-link" href="https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/" target="_blank" class="update-btn">Get Update</a>
+      <button id="dismiss-update-btn" class="dismiss-btn">Later</button>
+    </div>
+  </div>
+
   <div class="card">
     <div class="domain" id="current-domain">Inspecting tab...</div>
     <div id="verdict-badge" class="badge safe">Verified Clean</div>
@@ -102,6 +192,10 @@
   <div class="card" style="font-size:0.76rem;color:var(--muted);">
     <div>Desktop Bridge: <strong id="bridge-status" style="color:var(--accent);">Checking...</strong></div>
     <div style="margin-top:4px;">Network Rules: <strong>DeclarativeNetRequest Armed</strong></div>
+    <div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;">
+      <span>Extension Version: <strong style="color:var(--text);">v0.3.7</strong></span>
+      <a id="manual-update-check" href="#" style="color:var(--accent);text-decoration:none;font-weight:600;">Check Update</a>
+    </div>
   </div>
   <script src="popup.js"></script>
 </body>

@@ -44,16 +44,37 @@
       "box-shadow:0 4px 16px rgba(0,0,0,0.45)",
     ].join(";");
 
-    banner.innerHTML = `
-      <div>
-        <strong>🛡️ GENESIS SEEK BROWSER GUARD ALERT:</strong>
-        <span>${verdict.category} detected on <u>${verdict.domain}</u> (Risk: ${verdict.risk_score}/100) — ${verdict.reason}</span>
-      </div>
-      <button id="gs-dismiss-btn" style="background:#fff;color:#991b1b;border:none;padding:5px 12px;border-radius:5px;font-weight:700;cursor:pointer;">
-        Dismiss
-      </button>
-    `;
-    document.body.prepend(banner);
-    document.getElementById("gs-dismiss-btn").addEventListener("click", () => banner.remove());
+    const contentDiv = document.createElement("div");
+
+    const strongTitle = document.createElement("strong");
+    strongTitle.textContent = "🛡️ GENESIS SEEK BROWSER GUARD ALERT: ";
+    contentDiv.appendChild(strongTitle);
+
+    const spanText = document.createElement("span");
+    const categoryText = document.createTextNode((verdict.category || "Threat") + " detected on ");
+    const uDomain = document.createElement("u");
+    uDomain.textContent = verdict.domain || "unknown domain";
+    const riskScore = typeof verdict.risk_score === "number" ? verdict.risk_score : 80;
+    const detailsText = document.createTextNode(" (Risk: " + riskScore + "/100) — " + (verdict.reason || "Potentially malicious website."));
+
+    spanText.appendChild(categoryText);
+    spanText.appendChild(uDomain);
+    spanText.appendChild(detailsText);
+    contentDiv.appendChild(spanText);
+
+    const dismissBtn = document.createElement("button");
+    dismissBtn.id = "gs-dismiss-btn";
+    dismissBtn.textContent = "Dismiss";
+    dismissBtn.style.cssText = "background:#fff;color:#991b1b;border:none;padding:5px 12px;border-radius:5px;font-weight:700;cursor:pointer;";
+    dismissBtn.addEventListener("click", () => banner.remove());
+
+    banner.appendChild(contentDiv);
+    banner.appendChild(dismissBtn);
+
+    if (document.body) {
+      document.body.prepend(banner);
+    } else {
+      document.documentElement.appendChild(banner);
+    }
   }
 })();

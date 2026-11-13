@@ -9,31 +9,31 @@
 
 ---
 
-## 📥 Downloads & Installation (v0.3.6 Enterprise)
+## 📥 Downloads & Installation (v0.3.7 Enterprise)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
-* **Portable Archive**: [**genesis-seek-v0.3.6-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/genesis-seek-v0.3.6-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
+* **Portable Archive**: [**genesis-seek-v0.3.7-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Terminal Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Standalone AppImage**: [**Genesis-Seek-0.3.6-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/Genesis-Seek-0.3.6-x86_64.AppImage)
-* **Linux Archive**: [**genesis-seek-v0.3.6-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/genesis-seek-v0.3.6-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.3.7-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-0.3.7-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.3.7-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard Extensions
 
 | Browser | Package / Link | Installation Guide |
 | :--- | :--- | :--- |
-| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.6.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.6.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
-| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.6.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.6/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.6.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
+| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
 | **Mozilla Add-ons (AMO)** | [**Official Firefox AMO Store**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click official store installation and auto-updates. |
 
 ---
 
-## ✨ Core Enterprise Protection Layers (v0.3.6)
+## ✨ Core Enterprise Protection Layers (v0.3.7)
 
 1. **Multi-Engine File & Directory Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
    - **YARA-X & Pure-Rust Pattern Engine**: Loads custom and community `.yar` rules from `rules/` with dynamic hot-reloading at runtime.
@@ -72,7 +72,20 @@
 
 ## 📋 Changelog
 
-### 🚀 What's New in v0.3.6 Enterprise (CVE-2026-124194 Outlook NTLM/UNC Spoofing Shield)
+### 🚀 What's New in v0.3.7 Enterprise (Browser Guard Security & Update Notifier)
+* **Browser Guard Security Hardening:**
+  - **DOM XSS Elimination (`content_guard.js`):** Replaced unsanitized `innerHTML` block banners with safe DOM node creation and strict text nodes.
+  - **Bridge CORS & Endpoint Protection (`realtime_shield.rs`):** Restricted `/sentinel-profile` against cross-origin web requests from external sites; hardened loopback origin checks.
+  - **Tab Memory Leak Fix (`background.js`):** Added `chrome.tabs.onRemoved` cleanup to prevent unbounded accumulation of closed tab verdicts in local storage.
+  - **In-Page Alert Fallback:** Ensured the offline heuristic analyzer sends in-page block warning banners even when the desktop bridge is temporarily disconnected.
+* **Update Notifier Feature:**
+  - Added background extension update checker and popup UI notification banner alerting users immediately when a new browser extension version or app release is available.
+  - Added toolbar badge notification (`NEW`) on update detection.
+* **True Transparent Firefox & Chromium Extension Icons:**
+  - Re-rendered pixel-perfect PNG icons (`16x16`, `32x32`, `48x48`, `128x128`) from vector SVG masters.
+  - Completely eliminated the opaque black square bounding box in Firefox toolbar and add-on manager views.
+* **Synchronized Package Releases:**
+  - Regenerated `genesis-seek-browser-guard-firefox.zip` and updated release asset manifests for v0.3.7.
 * **Outlook Unsafe Action & NTLM Leak Detection (`CVE-2026-124194`):** Added [`Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2026_124194`](rules/cve_sentinel_heuristics.yar) to the bundled YARA heuristics, expanded `scanner.rs` content inspection to `.msg`, `.eml`, `.oft`, and `.rtf` files, and updated `sentinel_profile.json` (`SIG-WIN-OUTLOOK-02`) to close the Windows Active KEV gap.
 
 ### 🚀 What's New in v0.3.5 Enterprise (Cross-OS Kernel & Host Hardening + OpenAI 948 LPE Shield)

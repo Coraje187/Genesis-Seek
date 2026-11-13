@@ -105,7 +105,7 @@ fn write_browser_manifest(target_dir: &Path, is_firefox: bool) {
         r#"{
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.1.0",
+  "version": "0.3.7",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",
@@ -166,7 +166,7 @@ fn write_browser_manifest(target_dir: &Path, is_firefox: bool) {
         r#"{
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.1.0",
+  "version": "0.3.7",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",

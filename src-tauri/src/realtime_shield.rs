@@ -773,10 +773,16 @@ pub fn spawn_process_monitor() {
     });
 }
 
-fn http_json(status: &str, body: &str) -> String {
+fn http_json(status: &str, body: &str, allow_cors: bool) -> String {
+    let cors_header = if allow_cors {
+        "Access-Control-Allow-Origin: *\r\n"
+    } else {
+        ""
+    };
     format!(
-        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         status,
+        cors_header,
         body.len(),
         body
     )
@@ -809,10 +815,24 @@ pub fn spawn_browser_guard_bridge() {
             let first_line = req.lines().next().unwrap_or("");
 
             if first_line.starts_with("OPTIONS ") {
-                let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nConnection: close\r\n\r\n";
+                let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-Genesis-Seek-Client\r\nConnection: close\r\n\r\n";
                 let _ = stream.write_all(resp.as_bytes());
                 continue;
             }
+
+            let origin_header = req.lines()
+                .find(|l| l.to_lowercase().starts_with("origin:"))
+                .map(|l| l[7..].trim());
+            let is_untrusted_web_origin = match origin_header {
+                Some(origin) => {
+                    let low = origin.to_lowercase();
+                    !low.starts_with("moz-extension://")
+                        && !low.starts_with("chrome-extension://")
+                        && !low.starts_with("http://127.0.0.1")
+                        && !low.starts_with("http://localhost")
+                }
+                None => false,
+            };
 
             let target = first_line.split_whitespace().nth(1).unwrap_or("/");
             let response = if target.starts_with("/install-firefox") {
@@ -901,9 +921,19 @@ pub fn spawn_browser_guard_bridge() {
                         log_security_event("Browser Guard", "High", &format!("Browser Guard Blocked {}", result.category), &result.url, "Warning Shown");
                     }
                 }
-                http_json("200 OK", &serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
+                http_json("200 OK", &serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()), true)
+            } else if target.starts_with("/sentinel-profile") {
+                if is_untrusted_web_origin {
+                    http_json("403 Forbidden", r#"{"error":"Access denied: sentinel profile restricted to local clients"}"#, false)
+                } else {
+                    http_json("200 OK", include_str!("../../sentinel_profile.json"), false)
+                }
             } else {
-                if target.starts_with("/sentinel-profile") { http_json("200 OK", include_str!("../../sentinel_profile.json")) } else { http_json("200 OK", r#"{"service":"Genesis Seek Browser Guard Bridge","status":"active","version":"v0.3.6 Enterprise","protection_health":100}"#) }
+                http_json(
+                    "200 OK",
+                    r#"{"service":"Genesis Seek Browser Guard Bridge","status":"active","version":"v0.3.7 Enterprise","app_version":"0.3.7","extension_version":"0.3.7","latest_extension_version":"0.3.7","protection_health":100}"#,
+                    true,
+                )
             };
             let _ = stream.write_all(response.as_bytes());
         }
