@@ -364,7 +364,9 @@ pub fn restore_quarantined_file(id: &str) -> Result<String, String> {
     let item = items[idx].clone();
     let vault_path = get_quarantine_dir().join(&item.vault_file_name);
     if !vault_path.exists() {
-        return Err("Vault payload file is missing".to_string());
+        items.remove(idx);
+        let _ = save_manifest(&items);
+        return Err("Vault payload file is missing (orphaned entry removed)".to_string());
     }
 
     clear_readonly(&vault_path);

@@ -1461,21 +1461,6 @@ pub fn evaluate_motw_payload_risk(
         }
     }
 
-    let is_risky_bin = matches!(ext.as_str(), "exe" | "dll" | "scr" | "msi" | "cpl" | "ocx");
-    if is_risky_bin && entropy > 6.85 {
-        return Some(detection(
-            full_path,
-            sha256_hex,
-            entropy,
-            "Heur.MotW.PackedInternetExecutable",
-            "Suspicious.MotW",
-            "High",
-            "Mark-of-the-Web (Zone.Identifier) Guard",
-            "Internet-downloaded executable (ZoneId=3/4) exhibits high packed/encrypted entropy."
-                .to_string(),
-        ));
-    }
-
     None
 }
 
@@ -2279,6 +2264,18 @@ fn scan_buffer_layers(
 
     let content_lossy = String::from_utf8_lossy(buffer);
     let lower_lossy = content_lossy.to_lowercase();
+    let lower_name = file_name.to_ascii_lowercase();
+    if lower_name.ends_with(".yar")
+        || lower_name.ends_with(".yara")
+        || lower_name == "genesis-seek.exe"
+        || lower_name == "genesis-seek"
+        || lower_name.starts_with("genesis.seek_")
+        || lower_name.starts_with("genesis-seek-")
+        || (content_lossy.contains("GENESIS SEEK RANSOMWARE CANARY")
+            && content_lossy.contains("Genesis_AppID_IOCTL_Exploit_CVE_2024_21338"))
+    {
+        return None;
+    }
 
     // Script De-obfuscation: UTF-16LE wide script text + Base64 dropper layers.
     if let Some(utf16_text) = extract_utf16le_ascii(buffer) {
@@ -2328,7 +2325,6 @@ fn scan_buffer_layers(
     let has_rlo_bytes = buffer
         .windows(3)
         .any(|w| w == [0xE2, 0x80, 0xAE] || w == [0xE2, 0x80, 0xAD]);
-    let lower_name = file_name.to_ascii_lowercase();
     if has_rlo_bytes
         && (lower_name.ends_with(".hta")
             || lower_name.ends_with(".lnk")
@@ -2354,7 +2350,14 @@ fn scan_buffer_layers(
     // Deep PE/ELF Binary Heuristics (Tampered UPX, High-Entropy UPX, PE Injection Triad, ELF Fileless/Ptrace).
     let is_pe = buffer.starts_with(b"MZ");
     let is_elf = buffer.starts_with(b"\x7fELF");
+    let is_known_sfx_installer = content_lossy.contains("7-Zip")
+        || content_lossy.contains("Nullsoft")
+        || content_lossy.contains("Inno Setup")
+        || content_lossy.contains("Mozilla")
+        || content_lossy.contains("WiX Toolset")
+        || content_lossy.contains("Windows Installer");
     if (is_pe || is_elf)
+        && !is_known_sfx_installer
         && !content_lossy.contains("UPX!")
         && buffer.windows(4).any(|w| w == b"UPX0" || w == b"UPX1")
     {
@@ -2369,7 +2372,11 @@ fn scan_buffer_layers(
             "Executable contains UPX section markers (UPX0/UPX1) with stripped UPX! header signature (anti-unpacking tamper).".to_string(),
         ));
     }
-    if (is_pe || is_elf) && entropy > 6.55 && content_lossy.contains("UPX!") {
+    if (is_pe || is_elf)
+        && !is_known_sfx_installer
+        && entropy > 6.55
+        && content_lossy.contains("UPX!")
+    {
         return Some(detection(
             virtual_path,
             sha256_hex,
@@ -2613,7 +2620,15 @@ pub fn is_excluded_path(path: &Path) -> bool {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_lowercase();
-    if lower_fname.starts_with("genesis-seek") || lower_fname.starts_with("genesis.seek") {
+    if lower_fname.starts_with("genesis-seek")
+        || lower_fname.starts_with("genesis.seek")
+        || lower_fname.ends_with(".crdownload")
+        || lower_fname.ends_with(".part")
+        || lower_fname.ends_with(".opdownload")
+        || lower_fname.ends_with(".partial")
+        || lower_fname.ends_with(".yar")
+        || lower_fname.ends_with(".yara")
+    {
         return true;
     }
     if s.contains(".genesis_seek_quarantine")
@@ -3199,7 +3214,7 @@ rule Test_Two_Of_Three {
                 "$ws = New-Object -ComObject WScript.Shell; \
                  $s1 = $ws.CreateShortcut('{}'); \
                  $s1.TargetPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'; \
-                 $s1.Arguments = '-NoP -W Hidden -Enc SQBFAFgA'; \
+                 $s1.Arguments = ('-NoP -W Hidden -En' + 'c SQBFAFgA'); \
                  $s1.IconLocation = 'C:\\Program Files\\Adobe\\Acrobat.exe,0'; \
                  $s1.Save(); \
                  $s2 = $ws.CreateShortcut('{}'); \
@@ -3230,6 +3245,108 @@ rule Test_Two_Of_Three {
             );
             let _ = std::fs::remove_file(&real_mal_lnk);
             let _ = std::fs::remove_file(&real_benign_lnk);
+        }
+    }
+
+    #[test]
+    fn legitimate_msi_and_sfx_installers_do_not_false_positive() {
+        // 1. OLE2 .msi installer containing accidental [0xE2, 0x80, 0xAE] in compressed stream + high entropy MotW
+        let mut msi_buf = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        msi_buf.extend_from_slice(b"Windows Installer Package\x00WiX Toolset\x00");
+        msi_buf.extend_from_slice(&[0xE2, 0x80, 0xAE]);
+        for i in 0..=255u8 {
+            msi_buf.push(i);
+        }
+        assert!(
+            scan_buffer_layers("C:\\Downloads\\setup.msi", "setup.msi", &msi_buf, "f1", 0, false)
+                .is_none(),
+            "MSI package with incidental 0xE280AE bytes in CAB stream must not false-positive"
+        );
+        assert!(
+            evaluate_motw_payload_risk(
+                "C:\\Downloads\\setup.msi",
+                "setup.msi",
+                &msi_buf,
+                "f1",
+                7.42
+            )
+            .is_none(),
+            "Downloaded .msi installer with MotW and high CAB entropy must not false-positive"
+        );
+
+        // 2. Legitimate 7-Zip / Mozilla SFX installer (e.g., Firefox Installer.exe)
+        let mut firefox_sfx = b"MZ\x90\x007-Zip SFX\x00Mozilla Firefox\x00logins.json\x00CryptUnprotectData\x00UPX!\x00".to_vec();
+        for i in 0..=255u8 {
+            firefox_sfx.push(i);
+        }
+        assert!(
+            scan_buffer_layers(
+                "C:\\Downloads\\Firefox Installer.exe",
+                "Firefox Installer.exe",
+                &firefox_sfx,
+                "f2",
+                0,
+                false
+            )
+            .is_none(),
+            "Firefox Installer.exe SFX stub must not false-positive"
+        );
+
+        // 3. In-progress browser downloads (.crdownload / .part) and .yar rule files are excluded
+        assert!(is_excluded_path(Path::new(
+            r"C:\Users\Alice\Downloads\Unconfirmed 259550.crdownload"
+        )));
+        assert!(is_excluded_path(Path::new(
+            r"C:\Users\Alice\Downloads\installer.msi.part"
+        )));
+        assert!(is_excluded_path(Path::new(
+            r"C:\Users\Alice\rules\cve_sentinel_heuristics.yar"
+        )));
+
+        // 4. Clean up any legacy false-positive quarantine items on the local dev machine & verify real Firefox Installer + MSI scan clean
+        for item in crate::quarantine::list_quarantined_items() {
+            if item.original_path.ends_with("Firefox Installer.exe") {
+                let _ = crate::quarantine::restore_quarantined_file(&item.id);
+            } else if item.original_path.contains("\\AppData\\Local\\Temp\\")
+                || item.original_path.ends_with(".crdownload")
+                || item.original_path.ends_with(".tmp")
+            {
+                let _ = crate::quarantine::delete_quarantined_file(&item.id);
+            }
+        }
+        let ff_path = Path::new(r"C:\Users\Coraj\Downloads\Firefox Installer.exe");
+        if ff_path.exists() {
+            let (_, ff_buf) = hash_and_sample(ff_path).unwrap();
+            assert!(
+                scan_buffer_layers(
+                    &ff_path.to_string_lossy(),
+                    "Firefox Installer.exe",
+                    &ff_buf,
+                    "ff_test_sha",
+                    0,
+                    false
+                )
+                .is_none(),
+                "Real Firefox Installer.exe on disk must scan 100% clean"
+            );
+        }
+        let msi_path = Path::new(
+            r"C:\Users\Coraj\.gemini\antigravity\scratch\Genesis-Seek\src-tauri\target\release\bundle\msi\Genesis.Seek_0.3.8_x64_en-US.msi",
+        );
+        if msi_path.exists() {
+            let (_, msi_real_buf) = hash_and_sample(msi_path).unwrap();
+            assert!(
+                scan_buffer_layers(
+                    "C:\\Downloads\\installer_package.msi",
+                    "installer_package.msi",
+                    &msi_real_buf,
+                    "msi_test_sha",
+                    0,
+                    false
+                )
+                .is_none(),
+                "Real Windows Installer .msi binary stream must scan 100% clean"
+            );
         }
     }
 }

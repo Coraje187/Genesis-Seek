@@ -1196,14 +1196,16 @@ async function refreshQuarantine() {
     .map(
       (item) => `
     <tr>
-      <td>${formatTime(item.quarantined_at)}</td>
+      <td style="white-space:nowrap;">${formatTime(item.quarantined_at)}</td>
       <td><strong>${item.threat_name}</strong></td>
       <td><span class="sev-badge sev-${item.severity}">${item.severity}</span></td>
-      <td><code>${item.original_path}</code></td>
-      <td class="muted small"><code>${item.sha256.slice(0, 16)}...</code></td>
-      <td style="display:flex;gap:6px;">
-        <button class="btn btn-outline" style="padding:4px 8px;font-size:0.75rem;" onclick="restoreQuarantine('${item.id}')">Restore</button>
-        <button class="btn btn-danger" onclick="deleteQuarantine('${item.id}')">Shred Forever</button>
+      <td style="max-width:300px;word-break:break-all;"><code style="white-space:normal;word-break:break-all;">${item.original_path}</code></td>
+      <td class="muted small" style="white-space:nowrap;"><code>${item.sha256.slice(0, 12)}...</code></td>
+      <td style="white-space:nowrap;">
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-outline" style="padding:4px 8px;font-size:0.75rem;" onclick="restoreQuarantine('${item.id}')">Restore</button>
+          <button class="btn btn-danger" style="padding:4px 8px;font-size:0.75rem;" onclick="deleteQuarantine('${item.id}')">Shred Forever</button>
+        </div>
       </td>
     </tr>
   `

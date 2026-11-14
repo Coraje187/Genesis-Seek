@@ -24,7 +24,7 @@ rule Genesis_MSHTML_Unicode_Spoof_CVE_2024_43468 {
         severity = "Critical"
         description = "Detects RLO Unicode evasion, Braille padding, and concealed HTA/executable payloads"
     strings:
-        $re = /(\xE2\x80\xAE|<hta:application.{0,500}(mshta\.exe|WScript\.Shell|ActiveXObject))/is
+        $re = /(<hta:application.{0,500}(mshta\.exe|WScript\.Shell|ActiveXObject)|\xE2\x80\xAE.{0,200}(<hta:application|mshta\.exe|WScript\.Shell|ActiveXObject))/is
     condition:
         any of them
 }

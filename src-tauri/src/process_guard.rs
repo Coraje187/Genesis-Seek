@@ -147,7 +147,11 @@ pub fn intercept_and_scan_windows_process(
             && path_obj.exists()
             && !(behav_risk == "Critical" && is_protected_os_bin)
         {
-            scanner::scan_single_file(path_obj)
+            scanner::scan_single_file(path_obj).filter(|det| {
+                !quarantine::is_allowlisted(&det.sha256)
+                    && !det.category.starts_with("RiskWare")
+                    && (det.severity == "Critical" || det.severity == "High")
+            })
         } else {
             None
         };
@@ -156,8 +160,8 @@ pub fn intercept_and_scan_windows_process(
         let is_malicious = has_file_threat || behav_risk == "Critical";
 
         if is_malicious {
-            let (threat_name, reason, sha256) = match file_detection {
-                Some(det) => (det.threat_name, det.description, det.sha256),
+            let (threat_name, reason, sha256, sev) = match file_detection {
+                Some(det) => (det.threat_name, det.description, det.sha256, det.severity),
                 None => (
                     "Heur.Win32.VolatileProcessExec".to_string(),
                     behav_reason,
@@ -166,6 +170,7 @@ pub fn intercept_and_scan_windows_process(
                     } else {
                         scanner::compute_file_sha256(path_obj).unwrap_or_default()
                     },
+                    "Critical".to_string(),
                 ),
             };
 
@@ -189,7 +194,7 @@ pub fn intercept_and_scan_windows_process(
             // instance without ever deleting/quarantining legitimate OS binaries like powershell.exe or cmd.exe.
             if has_file_threat && !exe_path.is_empty() && path_obj.exists() && !is_protected_os_bin
             {
-                if quarantine::quarantine_file(exe_path, &threat_name, "Critical", &sha256).is_ok() {
+                if quarantine::quarantine_file(exe_path, &threat_name, &sev, &sha256).is_ok() {
                     action.push_str(" • Quarantined (.gvault)");
                 }
             } else if !has_file_threat {
@@ -689,16 +694,11 @@ pub fn evaluate_process_risk(name: &str, exe_path: &str, cmd_line: &str) -> (Str
 
     let is_appimage_mount = lower_exe.starts_with("/tmp/.mount_");
 
-    // Check 1: Execution from volatile memory or temp directories
-    if !is_appimage_mount
-        && (lower_exe.starts_with("/dev/shm/")
-            || lower_exe.starts_with("/tmp/")
-            || lower_exe.starts_with("/var/tmp/")
-            || lower_exe.contains("\\appdata\\local\\temp\\"))
-    {
+    // Check 1a: Execution from Linux shared-memory RAM disk (/dev/shm/) is always Critical
+    if !is_appimage_mount && lower_exe.starts_with("/dev/shm/") {
         return (
             "Critical".to_string(),
-            "Binary executing directly from temporary/volatile memory directory".to_string(),
+            "Binary executing directly from volatile shared-memory RAM disk (/dev/shm/)".to_string(),
         );
     }
 
@@ -756,6 +756,28 @@ pub fn evaluate_process_risk(name: &str, exe_path: &str, cmd_line: &str) -> (Str
             "Critical".to_string(),
             "ASR Behavioral Rule: Suspicious WMI or Scheduled Task persistence execution"
                 .to_string(),
+        );
+    }
+
+    if lower_name == "genesis-seek.exe"
+        || lower_name == "genesis-seek"
+        || lower_name == "msiexec.exe"
+    {
+        return (
+            "Safe".to_string(),
+            "Verified Genesis Seek / Windows Installer service".to_string(),
+        );
+    }
+
+    // Check 1b: Execution from temporary directories is Suspicious (suspended & file-scanned on Windows; allowed to resume if binary is clean)
+    if !is_appimage_mount
+        && (lower_exe.starts_with("/tmp/")
+            || lower_exe.starts_with("/var/tmp/")
+            || lower_exe.contains("\\appdata\\local\\temp\\"))
+    {
+        return (
+            "Suspicious".to_string(),
+            "Binary executing from temporary directory (inspected by Pre-Execution Guard)".to_string(),
         );
     }
 
@@ -1317,6 +1339,37 @@ mod process_guard_tests {
             "powershell.exe -NoP -e SQBFAFgA",
         );
         assert_eq!(ps_short_e, "Critical");
+
+        // 7-Zip / Firefox SFX temp installer stub in AppData\Local\Temp is Suspicious (file-scanned, NOT auto-killed as Critical)
+        let (sfx_stub_risk, _) = evaluate_process_risk(
+            "setup-stub.exe",
+            r"C:\Users\Alice\AppData\Local\Temp\7zS0E9E0266\setup-stub.exe",
+            r"C:\Users\Alice\AppData\Local\Temp\7zS0E9E0266\setup-stub.exe",
+        );
+        assert_eq!(sfx_stub_risk, "Suspicious");
+
+        // Genesis Seek binary or msiexec.exe running from Temp / System32 is Safe
+        let (gs_temp_risk, _) = evaluate_process_risk(
+            "genesis-seek.exe",
+            r"C:\Users\Alice\AppData\Local\Temp\7zO495FEBC5\genesis-seek.exe",
+            r"C:\Users\Alice\AppData\Local\Temp\7zO495FEBC5\genesis-seek.exe",
+        );
+        assert_eq!(gs_temp_risk, "Safe");
+
+        let (msiexec_risk, _) = evaluate_process_risk(
+            "msiexec.exe",
+            r"C:\Windows\System32\msiexec.exe",
+            r#"msiexec.exe /i "C:\Users\Alice\Downloads\Genesis.Seek_0.3.8_x64_en-US.msi""#,
+        );
+        assert_eq!(msiexec_risk, "Safe");
+
+        // Linux /dev/shm/ volatile RAM disk execution remains Critical
+        let (shm_risk, _) = evaluate_process_risk(
+            "dropper",
+            "/dev/shm/dropper",
+            "/dev/shm/dropper --daemon",
+        );
+        assert_eq!(shm_risk, "Critical");
 
         // Scheduled task XML audit
         let sus_task = evaluate_scheduled_task_xml(

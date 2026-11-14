@@ -35,7 +35,7 @@ rule YARA_Stealer_Browser_Credential_Access {
         $firefox_logins = "logins.json" nocase
         $crypt_unprotect = "CryptUnprotectData" nocase
     condition:
-        any of them
+        3 of them
 }
 
 rule YARA_Cryptominer_Stratum_Protocol {

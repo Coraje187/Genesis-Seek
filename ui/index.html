@@ -806,8 +806,8 @@
         <div class="panel-card">
           <div class="panel-header">
             <div>
-              <h3>Encrypted Quarantine Vault (<code>.gsvault</code>)</h3>
-              <p class="muted small">Isolated files are XOR-encrypted and stripped of execution permissions so they cannot harm your system. Restore false positives or shred permanently.</p>
+              <h3>Encrypted Quarantine Vault (<code>.gvault</code>)</h3>
+              <p class="muted small">Isolated files are ChaCha20-Poly1305 AEAD encrypted and stripped of execution permissions so they cannot harm your system. Restore false positives (automatically allowlisted) or shred permanently.</p>
             </div>
             <button class="btn btn-outline" id="btn-refresh-quarantine">Refresh Vault</button>
           </div>
