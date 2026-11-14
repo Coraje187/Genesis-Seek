@@ -1,4 +1,4 @@
-use crate::realtime_shield::{self, ShieldState};
+use crate::realtime_shield;
 use once_cell::sync::Lazy;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager};

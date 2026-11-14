@@ -49,3 +49,79 @@ rule YARA_Cryptominer_Stratum_Protocol {
     condition:
         any of them
 }
+
+rule YARA_Linux_XorDDoS_And_Mirai_Botnet {
+    meta:
+        category = "Malware.Linux.Botnet"
+        description = "Detects Mirai and XorDDoS Linux ELF botnet indicators (watchdog tampering, routing probes, init persistence)"
+        severity = "Critical"
+    strings:
+        $s1 = "/dev/watchdog" nocase
+        $s2 = "/proc/net/route" nocase
+        $s3 = "gcc -o" nocase
+        $s4 = "busybox ECCHI" nocase
+        $s5 = "/etc/init.d/S90" nocase
+        $s6 = "xor_keys" nocase
+    condition:
+        2 of them
+}
+
+rule YARA_Linux_Kinsing_Sysrv_ContainerWorm {
+    meta:
+        category = "Malware.Linux.ContainerWorm"
+        description = "Detects Kinsing / Sysrv Linux cloud and container worm payload indicators"
+        severity = "Critical"
+    strings:
+        $s1 = "kinsing" nocase
+        $s2 = "kdevtmpfsi" nocase
+        $s3 = "libsystem.so" nocase
+        $s4 = "/tmp/.ICEd-unix" nocase
+        $s5 = "crontab -l" nocase
+        $s6 = "setenforce 0" nocase
+        $s7 = "ufw disable" nocase
+    condition:
+        2 of them
+}
+
+rule YARA_Linux_BPFDoor_StealthBackdoor {
+    meta:
+        category = "Backdoor.Linux.BPFDoor"
+        description = "Detects BPFDoor stealth Linux backdoor process masquerading and raw BPF filter indicators"
+        severity = "Critical"
+    strings:
+        $s1 = "hald-addon-acpi" nocase
+        $s2 = "/dev/shm/kdmtmpflush" nocase
+        $s3 = "PACKET_MR_PROMISC" nocase
+        $s4 = "SO_ATTACH_FILTER" nocase
+    condition:
+        2 of them
+}
+
+rule YARA_Linux_Perfctl_Rootkit_Dropper {
+    meta:
+        category = "Rootkit.Linux.Perfctl"
+        description = "Detects Perfctl Linux rootkit and cryptomining dropper artifacts"
+        severity = "Critical"
+    strings:
+        $s1 = "perfctl" nocase
+        $s2 = "libgcwrap.so" nocase
+        $s3 = "/tmp/.perf.c" nocase
+        $s4 = "/usr/bin/perfcc" nocase
+    condition:
+        2 of them
+}
+
+rule YARA_Windows_CredentialDump_LSASS_Mimikatz {
+    meta:
+        category = "CredentialAccess.LSASSDump"
+        description = "Detects Mimikatz and comsvcs.dll MiniDump LSASS credential dumping tools"
+        severity = "Critical"
+    strings:
+        $s1 = "sekurlsa::logonpasswords" nocase
+        $s2 = "lsadump::sam" nocase
+        $s3 = "privilege::debug" nocase
+        $s4 = "comsvcs.dll" nocase
+        $s5 = "MiniDump" nocase
+    condition:
+        2 of them
+}

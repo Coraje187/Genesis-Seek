@@ -1,3 +1,6 @@
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
 $base = $PSScriptRoot
 if (-not $base) { $base = (Get-Location).Path }
 $outDir = Join-Path $base "release_assets"
@@ -5,8 +8,35 @@ if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Path $outDir | Out-Null
 
 $ver = $env:GITHUB_REF_NAME
-if (-not $ver) { $ver = "v0.3.7" }
+if (-not $ver) { $ver = "v0.3.8" }
 $verNum = if ($ver.StartsWith('v')) { $ver.Substring(1) } else { $ver }
+
+$Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+function New-PosixZipFromDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceDir,
+        [Parameter(Mandatory = $true)][string]$DestZip
+    )
+    if (Test-Path $DestZip) { Remove-Item -Force $DestZip }
+    $normRoot = (Resolve-Path $SourceDir).Path.TrimEnd('\', '/')
+    $archive = [System.IO.Compression.ZipFile]::Open($DestZip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        $files = [System.IO.Directory]::GetFiles($normRoot, "*", [System.IO.SearchOption]::AllDirectories)
+        foreach ($file in $files) {
+            $relPath = $file.Substring($normRoot.Length).TrimStart('\', '/').Replace('\', '/')
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $archive,
+                $file,
+                $relPath,
+                [System.IO.Compression.CompressionLevel]::Optimal
+            )
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+}
 
 Write-Host "Packaging release assets for version $ver in $outDir..."
 
@@ -70,12 +100,14 @@ $chromeManifest = @"
   }
 }
 "@
-Set-Content -Path (Join-Path $chromeStage "manifest.json") -Value $chromeManifest -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $chromeStage "manifest.json"), $chromeManifest, $Utf8NoBom)
 $chromeZipName = "Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-$ver.zip"
-Compress-Archive -Path "$chromeStage\*" -DestinationPath (Join-Path $outDir $chromeZipName) -Force
+$chromeZipOut = Join-Path $outDir $chromeZipName
+New-PosixZipFromDirectory -SourceDir $chromeStage -DestZip $chromeZipOut
+Copy-Item $chromeZipOut (Join-Path $base "genesis-seek-browser-guard-chromium.zip") -Force
 Remove-Item -Recurse -Force $chromeStage
 
-# 3. Browser Guard for Firefox (scripts + gecko Manifest V3)
+# 3. Browser Guard for Firefox (scripts + gecko Manifest V3 with strict POSIX paths & zero BOM)
 $ffStage = Join-Path $outDir "firefox_stage"
 New-Item -ItemType Directory -Path $ffStage | Out-Null
 Copy-Item -Recurse (Join-Path $base "browser-extension\*") $ffStage
@@ -135,11 +167,13 @@ $ffManifest = @"
   }
 }
 "@
-Set-Content -Path (Join-Path $ffStage "manifest.json") -Value $ffManifest -Encoding UTF8
+[System.IO.File]::WriteAllText((Join-Path $ffStage "manifest.json"), $ffManifest, $Utf8NoBom)
 $ffZipName = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.zip"
 $ffXpiName = "Genesis-Seek-Browser-Guard-for-Firefox-$ver.xpi"
-Compress-Archive -Path "$ffStage\*" -DestinationPath (Join-Path $outDir $ffZipName) -Force
-Copy-Item (Join-Path $outDir $ffZipName) (Join-Path $outDir $ffXpiName)
+$ffZipOut = Join-Path $outDir $ffZipName
+New-PosixZipFromDirectory -SourceDir $ffStage -DestZip $ffZipOut
+Copy-Item $ffZipOut (Join-Path $outDir $ffXpiName) -Force
+Copy-Item $ffZipOut (Join-Path $base "genesis-seek-browser-guard-firefox.zip") -Force
 Remove-Item -Recurse -Force $ffStage
 
 # 4. Windows zip package

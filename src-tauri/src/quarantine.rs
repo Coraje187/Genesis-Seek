@@ -170,6 +170,109 @@ fn clear_readonly(path: &Path) {
     let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
 }
 
+fn norm_path(s: &str) -> String {
+    let mut n = s.replace('\\', "/").to_ascii_lowercase();
+    if let Some(rest) = n.strip_prefix("//?/") {
+        n = rest.to_string();
+    }
+    n
+}
+
+/// True when `norm` equals `root` or is located strictly beneath it (path-segment aware).
+fn under(norm: &str, root: &str) -> bool {
+    let root = root.trim_end_matches('/');
+    !root.is_empty() && (norm == root || norm.starts_with(&format!("{}/", root)))
+}
+
+/// Genesis Seek's own per-user data/vault directories (never the install dir as a whole, because users
+/// frequently run the portable `.exe` straight from `Downloads`).
+fn own_data_roots() -> Vec<String> {
+    [dirs::data_local_dir(), dirs::data_dir(), dirs::config_dir()]
+        .into_iter()
+        .flatten()
+        .map(|base| norm_path(&base.join("genesis-seek").to_string_lossy()))
+        .collect()
+}
+
+/// Strict, anchored (never substring) protection of OS-core trees. Folders that merely *contain* words like
+/// `windows`, `genesis-seek` or `downloads` somewhere in their name are NOT protected.
+fn is_lexically_protected(norm: &str) -> bool {
+    if norm.is_empty() || norm.split('/').any(|seg| seg == "..") {
+        return true;
+    }
+    if own_data_roots().iter().any(|r| under(norm, r)) {
+        return true;
+    }
+
+    // Windows: drive-anchored OS trees (`<drive>:/windows`, `<drive>:/program files*`), except `\Windows\Temp`.
+    let bytes = norm.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        let rel = &norm[2..];
+        if under(rel, "/windows/temp") {
+            return false;
+        }
+        if under(rel, "/windows")
+            || under(rel, "/program files")
+            || under(rel, "/program files (x86)")
+            || under(rel, "/programdata/microsoft/windows defender")
+        {
+            return true;
+        }
+    }
+    // Windows: environment-resolved roots for non-default install drives / relocated SystemRoot.
+    for var in ["SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Some(val) = std::env::var_os(var) {
+            let root = norm_path(&val.to_string_lossy());
+            if under(norm, &root) && !under(norm, &format!("{}/temp", root.trim_end_matches('/'))) {
+                return true;
+            }
+        }
+    }
+
+    // POSIX: volatile drop zones are explicitly quarantine-able.
+    if under(norm, "/dev/shm") || under(norm, "/tmp") || under(norm, "/var/tmp") {
+        return false;
+    }
+    // POSIX: anchored OS-core trees.
+    [
+        "/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/lib64", "/usr/libexec", "/lib",
+        "/lib64", "/etc", "/boot", "/proc", "/sys", "/dev",
+    ]
+    .iter()
+    .any(|root| under(norm, root))
+}
+
+/// Check whether `path` points to a protected OS/system binary or installed system directory
+/// that must NEVER be stripped of permissions or moved into the quarantine vault.
+pub fn is_protected_system_path(path: &Path) -> bool {
+    if path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return true;
+    }
+    let cur_exe = std::env::current_exe().ok();
+    if cur_exe.as_deref() == Some(path) {
+        return true;
+    }
+
+    if is_lexically_protected(&norm_path(&path.to_string_lossy())) {
+        return true;
+    }
+
+    // Resolve symlinks/junctions: a link in a drop zone pointing into an OS tree is protected.
+    if let Ok(canon) = fs::canonicalize(path) {
+        if cur_exe.as_deref() == Some(canon.as_path()) {
+            return true;
+        }
+        if is_lexically_protected(&norm_path(&canon.to_string_lossy())) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Encrypt and isolate a malicious file into the Genesis Seek ChaCha20-Poly1305 Quarantine Vault (`.gvault`).
 pub fn quarantine_file(
     file_path: &str,
@@ -178,11 +281,22 @@ pub fn quarantine_file(
     sha256: &str,
 ) -> Result<QuarantinedItem, String> {
     let src = Path::new(file_path);
-    if !src.exists() {
-        return Err(format!("File no longer exists at {}", file_path));
+    if is_protected_system_path(src) {
+        return Err(format!(
+            "Refusing to quarantine protected OS/system binary: {}",
+            file_path
+        ));
+    }
+    let sym_meta = fs::symlink_metadata(src)
+        .map_err(|_| format!("File no longer exists at {}", file_path))?;
+    if sym_meta.file_type().is_symlink() {
+        return Err(format!(
+            "Refusing to follow or quarantine symbolic link: {}",
+            file_path
+        ));
     }
 
-    // 1. Immediately strip execute permissions on the target file
+    // 1. Immediately strip execute permissions on the target regular file
     strip_execute_permissions(src);
 
     // 2. Read raw file stream and encrypt with ChaCha20-Poly1305 AEAD
@@ -309,4 +423,125 @@ pub fn delete_quarantined_file(id: &str) -> Result<(), String> {
     }
     save_manifest(&items)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod quarantine_tests {
+    use super::{is_protected_system_path, quarantine_file};
+    use std::path::Path;
+
+    #[test]
+    fn refuses_to_quarantine_protected_system_binaries() {
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        )));
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Windows\SysWOW64\cmd.exe"
+        )));
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Program Files\LibreOffice\program\soffice.bin"
+        )));
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe"
+        )));
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Users\Alice\Downloads\..\..\Windows\System32\cmd.exe"
+        )));
+        assert!(is_protected_system_path(Path::new("/usr/bin/bash")));
+        assert!(is_protected_system_path(Path::new("/lib/x86_64-linux-gnu/libc.so.6")));
+        assert!(is_protected_system_path(Path::new("/etc/cron.d/backdoor")));
+
+        // Anchoring: folders that merely CONTAIN protected-looking words must NOT be protected
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Users\Public\windows\evil.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Users\Alice\Desktop\genesis-seek\dropper.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Users\Alice\Downloads\Program Files\setup.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new("/home/alice/opt/miner")));
+        assert!(!is_protected_system_path(Path::new("/home/alice/usr/bin/x")));
+        assert!(!is_protected_system_path(Path::new("/opt/vendor/dropper.elf")));
+        assert!(!is_protected_system_path(Path::new("/usr/local/bin/implant")));
+
+        // Protected roots must win even when the path also contains drop-zone words
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Windows\System32\Downloads\x.exe"
+        )));
+        assert!(is_protected_system_path(Path::new(
+            r"C:\Windows\System32\config\systemprofile\AppData\Local\Temp\x.exe"
+        )));
+        assert!(is_protected_system_path(Path::new("/usr/lib/foo/downloads/bar")));
+
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Users\Alice\Downloads\invoice_dropper.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Users\Alice\AppData\Local\Temp\stage.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new(
+            r"C:\Windows\Temp\dropper.exe"
+        )));
+        assert!(!is_protected_system_path(Path::new("/tmp/miner.elf")));
+        assert!(!is_protected_system_path(Path::new("/dev/shm/payload.bin")));
+
+        let err = quarantine_file(
+            r"C:\Windows\System32\cmd.exe",
+            "Test.Behavioral",
+            "Critical",
+            "00",
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("Refusing to quarantine protected OS/system binary"));
+    }
+
+    #[test]
+    fn refuses_symlinks_and_never_touches_link_targets() {
+        let dir = std::env::temp_dir().join(format!("gs_q_link_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim.bin");
+        std::fs::write(&victim, b"data").unwrap();
+        let link = dir.join("drop_link.bin");
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&victim, &link).is_ok();
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&victim, &link).is_ok();
+        #[cfg(not(any(unix, windows)))]
+        let linked = false;
+
+        if linked {
+            let err = quarantine_file(&link.to_string_lossy(), "Test.Link", "High", "00")
+                .expect_err("symlink must be refused");
+            assert!(err.contains("symbolic link"), "unexpected error: {}", err);
+            assert_eq!(std::fs::read(&victim).unwrap(), b"data");
+        } else {
+            eprintln!("symlink creation unavailable (no privilege); skipping link assertions");
+        }
+
+        // A link pointing into an OS tree is treated as protected via canonicalization
+        #[cfg(unix)]
+        {
+            let os_link = dir.join("sudo_link");
+            if std::os::unix::fs::symlink("/usr/bin/env", &os_link).is_ok() {
+                assert!(is_protected_system_path(&os_link));
+            }
+        }
+        #[cfg(windows)]
+        {
+            let os_link = dir.join("cmd_link.exe");
+            let cmd = std::path::PathBuf::from(
+                std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()),
+            )
+            .join("System32")
+            .join("cmd.exe");
+            if std::os::windows::fs::symlink_file(&cmd, &os_link).is_ok() {
+                assert!(is_protected_system_path(&os_link));
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

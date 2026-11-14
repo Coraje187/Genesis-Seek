@@ -9,46 +9,47 @@
 
 ---
 
-## 📥 Downloads & Installation (v0.3.7 Enterprise)
+## 📥 Downloads & Installation (v0.3.8 Enterprise)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
-* **Portable Archive**: [**genesis-seek-v0.3.7-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
+* **Portable Archive**: [**genesis-seek-v0.3.8-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Terminal Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Standalone AppImage**: [**Genesis-Seek-0.3.7-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-0.3.7-x86_64.AppImage)
-* **Linux Archive**: [**genesis-seek-v0.3.7-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.3.8-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-0.3.8-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.3.8-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard Extensions
 
 | Browser | Package / Link | Installation Guide |
 | :--- | :--- | :--- |
-| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
-| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
+| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
 | **Mozilla Add-ons (AMO)** | [**Official Firefox AMO Store**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click official store installation and auto-updates. |
 
 ---
 
-## ✨ Core Enterprise Protection Layers (v0.3.7)
+## ✨ Core Enterprise Protection Layers (v0.3.8)
 
-1. **Multi-Engine File & Directory Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
-   - **YARA-X & Pure-Rust Pattern Engine**: Loads custom and community `.yar` rules from `rules/` with dynamic hot-reloading at runtime.
-   - **SQLite $O(1)$ Threat Hash Database**: Indexed local database `threat_hashes.db` for instant offline hash lookups without API rate limits.
-   - **Microsecond In-Memory LRU Verdict Cache**: Caches verified clean files keyed by device, inode, mtime, and size to eliminate redundant disk I/O.
-   - **Heuristic & Header Analysis**: Detects disguised executable magic headers (`MZ` / `\x7FELF` disguised as images or office docs), double extensions (`invoice.pdf.exe`), and packed payloads.
+1. **Multi-Engine File, Archive & Container Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
+   - **Recursive Unpacking & De-Obfuscation**: Inspects nested `.zip`/OpenXML (with ZipSlip, ZipBomb, encrypted executable dropper, and Office `vbaProject.bin`/OLE2 macro detection), `.tar.gz`/`.tgz`/GZIP, PDF `FlateDecode` streams (`/OpenAction`/`/JS`/`/Launch`), Base64/UTF-16LE stagers, 64 KB EOF overlays, and optional local ClamAV `clamd` (`zINSTREAM\0`) socket scanning.
+   - **Pure-Rust YARA Pattern Engine**: Supports multi-pattern threshold conditions (`all of them`, `2 of them`), raw hex byte rules (`{ 18 a0 22 00 }`), and hot-reloading `.yar` files from `rules/`.
+   - **SQLite $O(1)$ Threat Hash Database**: Indexed local `threat_hashes.db` with `PRAGMA quick_check` self-healing and empty/allowlisted hash filtering.
+   - **Microsecond In-Memory LRU Verdict Cache**: Caches verified verdicts keyed by device, inode/creation ticks, mtime, and size to eliminate redundant disk I/O.
+   - **PE/ELF & Masquerade Heuristics**: Detects tampered UPX headers (`UPX0`/`UPX1` without `UPX!`), PE process-injection API triads, ELF `memfd_create`/`ptrace` stealth, disguised `MZ`/`\x7FELF` magic headers, and double extensions.
 
 2. **Pre-Execution Blocking & Real-Time Shield ([`src-tauri/src/realtime_shield.rs`](src-tauri/src/realtime_shield.rs) & [`src-tauri/src/process_guard.rs`](src-tauri/src/process_guard.rs))**
    - **Windows Instant Thread Suspension**: Intercepts volatile execution paths (`Downloads`, `AppData\Local\Temp`, `Public`), immediately suspends all process threads via `NtSuspendProcess` (`ntdll.dll`), verifies image integrity, and either resumes (`NtResumeProcess`) or terminates + isolates.
-   - **Linux Kernel Pre-Exec (`fanotify`)**: Blocks untrusted binary execution at instruction zero using `FAN_OPEN_EXEC_PERM | FAN_CLOSE_WRITE`, with automated fallback to unprivileged user-space watcher if root capabilities are absent.
-   - **Ransomware Canary Decoy Tripwires**: Arms hidden decoy documents (`.genesis-seek-canary/`) and triggers instant Critical mitigation if tampering is detected.
+   - **Linux Kernel Pre-Exec (`fanotify`) with Watchdog Safety**: Blocks untrusted binary execution using `FAN_OPEN_EXEC_PERM | FAN_CLOSE_WRITE` with self/child PID exclusion, trusted OS binary allowlisting (`/usr/bin`, `/bin`, `/usr/lib/systemd`), a 250 ms fail-open scan watchdog, async post-verdict quarantine, and automated fallback to user-space watcher.
+   - **Active Ransomware Canary Decoys**: Arms hidden decoys (`.genesis-seek-canary/`), neutralizes suspect processes running from temp/download folders on trip, and restores decoys automatically.
 
-3. **Linux Kernel MPTCP Exploit Defense & Hardening ([`src-tauri/src/kernel_defense.rs`](src-tauri/src/kernel_defense.rs))**
-   - **CVE-2026-98432 Audit**: Live inspection of Linux kernel Multipath TCP (MPTCP) stack state (`/proc/sys/net/mptcp/enabled`).
-   - **1-Click Sysctl Hardening**: Instantly closes the zero-click remote root vector by disabling MPTCP in memory (`sysctl -w net.mptcp.enabled=0`) and persistently via `/etc/sysctl.d/99-genesis-seek-mptcp.conf`.
+3. **Cross-OS Kernel & Sysctl Audit / Hardening ([`src-tauri/src/kernel_defense.rs`](src-tauri/src/kernel_defense.rs))**
+   - **Read-Only KSPP & Host Audit**: Live inspection of Linux KSPP sysctl settings (`net.mptcp.enabled`, `kernel.unprivileged_bpf_disabled`, `kernel.kptr_restrict`) and Windows `HideFileExt` state without mutating system settings until explicitly requested.
+   - **1-Click Sysctl & Driver Hardening**: Applies Linux KSPP hardening (`/etc/sysctl.d/99-genesis-seek-mptcp.conf`) to reduce `CVE-2024-1086`, `CVE-2024-26923`, and `CVE-2023-4911` LPE exposure, or Windows `HideFileExt=0` & Vulnerable Driver Blocklist enforcement (`CVE-2024-43468`, `CVE-2024-21338`).
 
 4. **Live Cloud Threat Intelligence, Optional VirusTotal v3 API & Network Guard ([`src-tauri/src/threat_intel_and_net.rs`](src-tauri/src/threat_intel_and_net.rs))**
    - **Zero-Telemetry Feeds**: Automated background sync with **Abuse.ch MalwareBazaar** (batch inserted into SQLite), **Abuse.ch URLhaus**, and **PhishStats**.
@@ -72,6 +73,28 @@
 
 ## 📋 Changelog
 
+### 🚀 What's New in v0.3.8 Enterprise (System Watcher Rollback, Memory Hollowing Guard, Deep Unpacking & XPI Fix)
+* **System Watcher Pre-Encryption Shadow Journal & Automatic File Rollback (`realtime_shield.rs`):**
+  - Maintains bounded pre-encryption snapshots of user documents and automatically rolls files back to their clean state if overwritten with high-entropy ransomware ciphertext ($H \ge 7.20$) or renamed to ransomware extensions (`.locked`, `.lockbit`, `.encrypted`, `.ryuk`, `.akira`, `.blackcat`, etc.) while terminating volatile-path offending processes.
+* **Live Process Memory Hollowing & Reflective DLL Scanner (`process_guard.rs`):**
+  - Scans private/anonymous executable memory pages (`VirtualQueryEx` + `ReadProcessMemory` on Windows; `/proc/<pid>/exe`, `/proc/<pid>/maps`, and `/proc/<pid>/mem` on Linux) for unbacked PE/ELF headers, MZ-stomped Cobalt Strike beacons, `ReflectiveLoader` exports, and Stephen Fewer x64 PEB-walk shellcode stubs without false-positiving on browser/JIT pages.
+* **MS-SHLLINK (`.lnk`) Binary Parser, NTFS MotW (`:Zone.Identifier`) & Multi-Ancestor ASR (`scanner.rs`, `process_guard.rs`, `quarantine.rs`):**
+  - Added structured MS-SHLLINK `.lnk` parsing (`LinkInfo` local & UNC share suffixes, PowerShell prefix-shortened `-e`/`-enc` detection, document-icon masquerading), NTFS `:Zone.Identifier` (`ZoneId=3/4`) script dropper inspection, 4-hop parent/ancestor Office & Linux PDF reader ASR rules, LSASS `MiniDump`/`SAM` credential-dumping guards, recursive `C:\Windows\System32\Tasks` XML auditing, and root-anchored OS binary & symlink quarantine safeguards.
+* **Pure-Rust POSIX Firefox `.xpi` Builder & Profile Provisioning (`extension_installer.rs`, `realtime_shield.rs`):**
+  - Added `build_valid_firefox_xpi_bytes()` generating standard PKZIP `.xpi` archives with POSIX `/` entry names and BOM-free `manifest.json`, served directly at `http://127.0.0.1:49152/genesis-seek-browser-guard.xpi` (`Content-Type: application/x-xpinstall`), with marker-scoped `user.js` management and isolated Chromium staging (`Genesis-Seek-Browser-Guard-Chromium`).
+* **Recursive Multi-Layer Archive, PDF & Macro Unpacker (`scanner.rs`):**
+  - Added bounded pure-Rust inspection of nested `.zip`/OpenXML containers (`ZipSlip` path traversal, `ZipBomb` ratio/size bounds, encrypted executable droppers, Office `vbaProject.bin`/OLE2 macro payloads), `.tar.gz`/`.tgz`/GZIP streams, PDF `FlateDecode` object streams (`/OpenAction`/`/AA` + `/JS`/`/Launch`), and Base64 + UTF-16LE obfuscated scripts.
+  - Added 64 KB trailing overlay sampling on >2 MB files and deep PE/ELF heuristics (tampered UPX sections without `UPX!`, PE `VirtualAllocEx`/`WriteProcessMemory`/`CreateRemoteThread` triad, ELF `memfd_create`/`ptrace` stealth).
+  - Upgraded pure-Rust YARA parser to support raw hex byte patterns (`{ 18 a0 22 00 }`), `all of them`, and `N of them` threshold conditions, plus 5 new Linux & Windows rules (`XorDDoS`/`Mirai`, `Kinsing`/`Sysrv`, `BPFDoor`, `Perfctl`, LSASS/`Mimikatz`) in `rules/default_enterprise.yar`.
+  - Added optional local ClamAV `clamd` socket hook (`zINSTREAM\0` via Unix domain sockets & `127.0.0.1:3310` with 60s failure backoff) and SQLite `PRAGMA quick_check` corruption recovery with empty/invalid/allowlisted hash filtering.
+* **Kernel Deadlock Safety, Canary Neutralization & Bridge Hardening (`realtime_shield.rs`, `process_guard.rs`):**
+  - Added self/child PID exclusion, trusted OS binary allowlisting (`/usr/bin`, `/bin`, `/usr/lib/systemd`), a fail-open watchdog timeout, and non-blocking post-verdict async quarantine to Linux `fanotify` pre-exec handling.
+  - Wired active termination & quarantine of volatile-path processes on Ransomware Canary trip, and added Windows Registry `Run`/`RunOnce` + Linux `/etc/ld.so.preload`, `/etc/crontab`, `.profile`, `.zshrc` persistence audits.
+  - Hardened the `127.0.0.1:49152` Browser Guard bridge with a 16-worker concurrency cap, `Host:` DNS-rebinding validation, `Sec-Fetch-Site: cross-site` restrictions on `/sentinel-profile` & `/install-firefox`, a bounded `last_logged` domain map, and a 2048-character URL cap.
+* **Threat-Intel Anti-Poisoning & Read-Only Kernel Audits (`threat_intel_and_net.rs`, `kernel_defense.rs`):**
+  - Bounded `reqwest` feed downloads to `MAX_FEED_BYTES`, rejected HTML captive-portal responses, and enforced `PROTECTED_SAFE_DOMAINS` + strict DNS label validation across URLhaus/PhishStats parsers.
+  - Made `audit_linux_kernel_mptcp()` strictly read-only on Windows and replaced unverified CVE labels with verified NVD/MITRE CVEs and Linux KSPP hardening descriptions.
+
 ### 🚀 What's New in v0.3.7 Enterprise (Browser Guard Security & Update Notifier)
 * **Browser Guard Security Hardening:**
   - **DOM XSS Elimination (`content_guard.js`):** Replaced unsanitized `innerHTML` block banners with safe DOM node creation and strict text nodes.
@@ -86,11 +109,11 @@
   - Completely eliminated the opaque black square bounding box in Firefox toolbar and add-on manager views.
 * **Synchronized Package Releases:**
   - Regenerated `genesis-seek-browser-guard-firefox.zip` and updated release asset manifests for v0.3.7.
-* **Outlook Unsafe Action & NTLM Leak Detection (`CVE-2026-124194`):** Added [`Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2026_124194`](rules/cve_sentinel_heuristics.yar) to the bundled YARA heuristics, expanded `scanner.rs` content inspection to `.msg`, `.eml`, `.oft`, and `.rtf` files, and updated `sentinel_profile.json` (`SIG-WIN-OUTLOOK-02`) to close the Windows Active KEV gap.
+* **Outlook Unsafe Action & NTLM Leak Detection (`CVE-2023-23397` / `CVE-2024-21413`):** Added [`Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2023_23397`](rules/cve_sentinel_heuristics.yar) to the bundled YARA heuristics, expanded `scanner.rs` content inspection to `.msg`, `.eml`, `.oft`, and `.rtf` files, and updated `sentinel_profile.json` (`SIG-WIN-OUTLOOK-02`) to close the Windows Active KEV gap.
 
-### 🚀 What's New in v0.3.5 Enterprise (Cross-OS Kernel & Host Hardening + OpenAI 948 LPE Shield)
-* **Linux Kernel LPE & Info-Leak Sysctl Hardening:** Expanded `kernel_defense.rs` to lock down `kernel.unprivileged_bpf_disabled=1`, `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`, and `kernel.yama.ptrace_scope=1` alongside `net.mptcp.enabled=0` (`CVE-2026-98432`), neutralizing the OpenAI 948 Linux kernel LPE info-leak and eBPF attack vectors.
-* **Windows Host & Driver Blocklist Hardening:** Automatically enforces `HideFileExt=0` in Windows Explorer (`CVE-2024-43468` disguised extension mitigation) and enables the Windows Vulnerable Driver Blocklist (`VulnerableDriverBlocklistEnable=1` for `CVE-2024-21338` BYOVD defense).
+### 🚀 What's New in v0.3.5 Enterprise (Cross-OS Kernel & Host Hardening + KSPP LPE Shield)
+* **Linux Kernel LPE & Info-Leak Sysctl Hardening:** Expanded `kernel_defense.rs` to lock down `kernel.unprivileged_bpf_disabled=1`, `kernel.kptr_restrict=2`, `kernel.dmesg_restrict=1`, and `kernel.yama.ptrace_scope=1` alongside `net.mptcp.enabled=0`, reinforcing KSPP protections against `CVE-2024-1086`, `CVE-2024-26923`, and eBPF attack vectors.
+* **Windows Host & Driver Blocklist Hardening:** Supports `HideFileExt=0` hardening in Windows Explorer (`CVE-2024-43468` disguised extension mitigation) and enables the Windows Vulnerable Driver Blocklist (`VulnerableDriverBlocklistEnable=1` for `CVE-2024-21338` BYOVD defense).
 * **Live Sentinel Bridge (`/sentinel-profile`):** Added `/sentinel-profile` to the local loopback bridge (`127.0.0.1:49152`) and published `sentinel_profile.json` for real-time 100% protection health verification.
 
 ### What's New in v0.3.4 Enterprise (CVE Sentinel Hardening & 100% Protection)
@@ -101,9 +124,8 @@
   - **Linux Kernel `nf_tables` & Memory Corruption Rules (`CVE-2024-1086`, `CVE-2024-26923`):** Proactively blocks compiled exploit binaries attempting root privilege escalation via user namespaces.
   - **Network RCE Heuristic Signatures:** Added PoC detection for Windows TCP/IP IPv6 underflow (`CVE-2024-38063`), Wi-Fi beacon attacks (`CVE-2024-30078`), and OpenSSH `regreSSHion` (`CVE-2024-6387`).
 
-### What's New in v0.3.3 Enterprise (Kernel MPTCP Shield & Hotfix Release)
-* **Linux Kernel MPTCP Exploit Shield (CVE-2026-98432):** Real-time detection and 1-click mitigation for the critical CVSS 9.8 remote code execution vulnerability in the Linux Multipath TCP subsystem.
-* **1-Click Kernel Sysctl Hardening:** Instantly neutralizes the zero-click network attack vector (`net.mptcp.enabled = 0`) with persistent `/etc/sysctl.d/99-genesis-seek-mptcp.conf` deployment.
+### What's New in v0.3.3 Enterprise (Kernel MPTCP & KSPP Shield Release)
+* **Linux Kernel MPTCP & KSPP Sysctl Shield:** Real-time inspection and 1-click KSPP hardening for the Linux Multipath TCP subsystem (`net.mptcp.enabled = 0`) with persistent `/etc/sysctl.d/99-genesis-seek-mptcp.conf` deployment.
 * **Kernel Advisory Dashboard Banner:** Proactively alerts Linux users if their kernel networking stack is exposed, with direct links to audit and harden the host.
 * **Desktop Launcher & Icon Hotfix:** Resolved desktop entry launcher branding to guarantee official 512×512 branding (`genesis-seek.png`) and updated enterprise tagline across all Linux environments.
 

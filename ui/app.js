@@ -81,10 +81,10 @@ const fallbackState = {
     kernel_release: "Linux Kernel",
     mptcp_supported: true,
     mptcp_enabled: true,
-    vulnerability_status: "Vulnerable (CVE-2026-98432 Zero-Click Vector Open)",
+    vulnerability_status: "Exposed (KSPP Sysctl & MPTCP Surface Open)",
     severity: "Critical",
-    advisory_title: "Critical Linux Kernel TCP/MPTCP Exploit (CVE-2026-98432)",
-    advisory_details: "Multipath TCP is enabled (net.mptcp.enabled = 1). An unauthenticated remote attacker can exploit a race condition in MPTCP suboptions to achieve remote root code execution over TCP. Immediate mitigation: Disable MPTCP.",
+    advisory_title: "Linux Kernel KSPP & MPTCP Surface Exposed (CVE-2024-1086 / CVE-2023-4911)",
+    advisory_details: "Multipath TCP or unprivileged eBPF/pointer sysctl settings are open (net.mptcp.enabled = 1). Enforce KSPP hardening to disable MPTCP, restrict kernel pointers (kptr_restrict=2), and lock unprivileged BPF.",
     mitigation_command: "sysctl -w net.mptcp.enabled=0",
     can_mitigate: true,
   },
@@ -251,14 +251,14 @@ function simulateBackend(cmd, args) {
       fallbackState.kernelAudit.mptcp_enabled = !disable;
       fallbackState.kernelAudit.severity = disable ? "Safe" : "Critical";
       fallbackState.kernelAudit.vulnerability_status = disable
-        ? "Hardened & Protected (MPTCP Disabled)"
-        : "Vulnerable (CVE-2026-98432 Zero-Click Vector Open)";
+        ? "Hardened & Protected (MPTCP & KSPP Sysctls Active)"
+        : "Exposed (KSPP Sysctl & MPTCP Surface Open)";
       fallbackState.kernelAudit.advisory_title = disable
-        ? "Linux Kernel Hardened: MPTCP Network Vector Neutralized"
-        : "Critical Linux Kernel TCP/MPTCP Exploit (CVE-2026-98432)";
+        ? "Linux Kernel Hardened: MPTCP & KSPP Shields Applied"
+        : "Linux Kernel KSPP & MPTCP Surface Exposed (CVE-2024-1086 / CVE-2023-4911)";
       fallbackState.kernelAudit.advisory_details = disable
-        ? "Multipath TCP is disabled (net.mptcp.enabled = 0). Attack vector neutralized."
-        : "Multipath TCP is enabled (net.mptcp.enabled = 1). Vulnerable to CVE-2026-98432.";
+        ? "Multipath TCP is disabled (net.mptcp.enabled = 0) and KSPP sysctl shields are enforced."
+        : "Multipath TCP or unprivileged eBPF sysctls are open (net.mptcp.enabled = 1).";
       return { ...fallbackState.kernelAudit };
     }
     case "sync_threat_feeds":
@@ -860,7 +860,7 @@ document
   .getElementById("btn-refresh-network")
   .addEventListener("click", refreshNetworkAndFeeds);
 
-// Linux Kernel MPTCP Exploit Defense (CVE-2026-98432)
+// Linux Kernel KSPP & Host Attack-Surface Defense
 let currentKernelAudit = null;
 
 async function refreshKernelAudit() {

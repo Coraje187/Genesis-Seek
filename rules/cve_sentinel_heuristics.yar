@@ -1,5 +1,5 @@
 // ==============================================================================
-// 🛡️ Genesis Seek — Curated CVE Sentinel Heuristic Signatures (v0.3.4 Enterprise)
+// 🛡️ Genesis Seek — Curated CVE Sentinel Heuristic Signatures (v0.3.8 Enterprise)
 // Targets: Zero-Days, KEV Exploits, BYOVD Blindings, and Evasion Patterns
 // Synced from Genesis-Seek Vulnerability & Patch Gap Sentinel
 // ==============================================================================
@@ -125,14 +125,14 @@ rule Genesis_Looney_Tunables_CVE_2023_4911 {
         any of them
 }
 
-rule Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2026_124194 {
+rule Genesis_Outlook_UnsafeAction_NTLM_Spoof_CVE_2023_23397 {
     meta:
-        cve = "CVE-2026-124194"
+        cve = "CVE-2023-23397"
         category = "CredentialAccess.OutlookSpoof"
         severity = "High"
-        description = "Detects crafted Outlook message files (.msg/.eml/.oft) or payloads triggering unprompted remote UNC/SMB/WebDAV NTLMv2 leaks"
+        description = "Detects crafted Outlook message files (.msg/.eml/.oft) or payloads triggering unprompted remote UNC/SMB/WebDAV NTLMv2 leaks (CVE-2023-23397 / CVE-2024-21413)"
     strings:
-        $re = /((PidLidReminderFileParameter|__substg1\.0_|Content-Type:\s*message\x2frfc822|X-Unsent:\s*1).{0,800}(file:\x2f\x2f\x2f?\\\\[^\s"'>]+|\\\\[0-9a-zA-Z._-]+\\[^\s"'>]+|outlook:[^\s"'>]+)|cve[-_]2026[-_]124194)/is
+        $re = /((PidLidReminderFileParameter|__substg1\.0_|Content-Type:\s*message\x2frfc822|X-Unsent:\s*1).{0,800}(file:\x2f\x2f\x2f?\\\\[^\s"'>]+|\\\\[0-9a-zA-Z._-]+\\[^\s"'>]+|outlook:[^\s"'>]+)|cve[-_]2023[-_]23397|cve[-_]2026[-_]124194)/is
     condition:
         any of them
 }

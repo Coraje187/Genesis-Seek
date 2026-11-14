@@ -1402,11 +1402,13 @@ dependencies = [
 
 [[package]]
 name = "genesis-seek"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
+ "base64 0.22.1",
  "chacha20poly1305",
  "chrono",
  "dirs 5.0.1",
+ "flate2",
  "gio",
  "glib",
  "hex",

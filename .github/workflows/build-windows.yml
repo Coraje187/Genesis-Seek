@@ -40,29 +40,36 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.3.7' }}
+          tag_name: ${{ github.ref_name || 'v0.3.8' }}
           overwrite_files: true
           fail_on_unmatched_files: false
           body: |
-            ## 🛡️ Genesis Seek Enterprise v0.3.7 — Release Assets Guide
+            ## 🛡️ Genesis Seek Enterprise v0.3.8 — Release Notes & Assets Guide
+
+            ### 🚀 What's New in v0.3.8:
+            * **System Watcher Pre-Encryption Shadow Journal & Auto-Rollback**: Automatically restores user documents from an in-memory shadow journal if overwritten with high-entropy ransomware ciphertext or renamed to `.locked`/`.lockbit`/`.encrypted`.
+            * **Live Process Memory Hollowing & Reflective DLL Guard**: Scans private/anonymous executable memory (`VirtualQueryEx` + `ReadProcessMemory` on Windows; `/proc/<pid>/maps` + `/proc/<pid>/mem` + `memfd:` on Linux) for unbacked PE/ELF headers, MZ-stomped Cobalt Strike beacons, and Stephen Fewer x64 PEB-walk shellcode stubs.
+            * **ClamAV-Grade Deep Unpacker & Optional `clamd` Bridge**: Recursive `.zip`/`.tar.gz` unpacking (`ZipSlip` & `ZipBomb` guards), Office `vbaProject.bin`/OLE2 & OOXML macro scanning, PDF `FlateDecode` stream decompression, MS-SHLLINK `.lnk` binary parser, NTFS `:Zone.Identifier` MotW guard, and automatic local `clamd` socket integration.
+            * **Multi-Ancestor ASR & Root-Anchored Quarantine Guard**: 4-hop parent/ancestor Office & PDF reader shell blocking, LSASS `MiniDump`/`SAM` protection, recursive Windows Scheduled Task XML auditing, Linux `fanotify` fail-open watchdog, and strict OS binary & symlink quarantine protection.
+            * **Valid POSIX PKZIP Firefox `.xpi` Builder**: Pure-Rust `.xpi` packager with forward-slash entry paths and BOM-free UTF-8 `manifest.json`, served directly at `http://127.0.0.1:49152/genesis-seek-browser-guard.xpi`.
 
             ### 🌐 Browser Guard Extensions:
             * **Google Chrome, Microsoft Edge & Brave:**
-              Download [`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.7.zip) (Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked").
+              Download [`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip) (Unpack and load via `chrome://extensions` or `edge://extensions` -> "Load unpacked").
             * **Mozilla Firefox:**
-              Download [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.xpi) (or install 1-click from [Mozilla AMO](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)).
-              Source zip: [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.7.zip).
+              Download [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi) (or install 1-click from [Mozilla AMO](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/)).
+              Source zip: [`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.zip).
 
             ### 🪟 Windows Desktop Application:
-            * **Standalone Executable:** [`genesis-seek.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek.exe)
-            * **NSIS Setup Installer:** [`Genesis.Seek_0.3.7_x64-setup.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis.Seek_0.3.7_x64-setup.exe)
-            * **MSI Enterprise Package:** [`Genesis.Seek_0.3.7_x64_en-US.msi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis.Seek_0.3.7_x64_en-US.msi)
-            * **Complete Portable Archive:** [`genesis-seek-v0.3.7-windows-x86_64.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-windows-x86_64.zip)
+            * **Standalone Executable:** [`genesis-seek.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek.exe)
+            * **NSIS Setup Installer:** [`Genesis.Seek_0.3.8_x64-setup.exe`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis.Seek_0.3.8_x64-setup.exe)
+            * **MSI Enterprise Package:** [`Genesis.Seek_0.3.8_x64_en-US.msi`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis.Seek_0.3.8_x64_en-US.msi)
+            * **Complete Portable Archive:** [`genesis-seek-v0.3.8-windows-x86_64.zip`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-windows-x86_64.zip)
 
             ### 🐧 Linux Desktop Application:
-            * **Standalone AppImage:** [`Genesis-Seek-0.3.7-x86_64.AppImage`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis-Seek-0.3.7-x86_64.AppImage)
-            * **Debian / Ubuntu Package:** [`Genesis.Seek_0.3.7_amd64.deb`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/Genesis.Seek_0.3.7_amd64.deb)
-            * **Portable Tarball:** [`genesis-seek-v0.3.7-linux-x86_64.tar.gz`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.7/genesis-seek-v0.3.7-linux-x86_64.tar.gz)
+            * **Standalone AppImage:** [`Genesis-Seek-0.3.8-x86_64.AppImage`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-0.3.8-x86_64.AppImage)
+            * **Debian / Ubuntu Package:** [`Genesis.Seek_0.3.8_amd64.deb`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis.Seek_0.3.8_amd64.deb)
+            * **Portable Tarball:** [`genesis-seek-v0.3.8-linux-x86_64.tar.gz`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-linux-x86_64.tar.gz)
             * **1-Line Terminal Installer:** `curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash`
 
             ---
@@ -113,7 +120,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VER="${{ github.ref_name }}"
-          if [ -z "$VER" ]; then VER="v0.3.7"; fi
+          if [ -z "$VER" ]; then VER="v0.3.8"; fi
           CLEAN_VER="${VER#v}"
           TAR_NAME="genesis-seek-${VER}-linux-x86_64.tar.gz"
           tar -czvf "$TAR_NAME" -C src-tauri/target/release genesis-seek
@@ -161,7 +168,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          tag_name: ${{ github.ref_name || 'v0.3.7' }}
+          tag_name: ${{ github.ref_name || 'v0.3.8' }}
           overwrite_files: true
           fail_on_unmatched_files: false
           files: |
