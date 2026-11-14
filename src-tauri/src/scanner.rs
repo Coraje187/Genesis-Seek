@@ -45,6 +45,26 @@ pub struct ScanReport {
     pub completed_at: DateTime<Utc>,
 }
 
+/// Mail Gateway & RFC 5322 `.eml`/`.mbox` inspection report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailGatewayReport {
+    pub safe: bool,
+    pub verdict: String, // "CLEAN", "REJECT_MALWARE", "QUARANTINE_PHISHING", "SUSPICIOUS_AUTH"
+    pub risk_score: u8,
+    pub sender_from: String,
+    pub reply_to: String,
+    pub return_path: String,
+    pub subject: String,
+    pub spf_status: String,
+    pub dkim_status: String,
+    pub dmarc_status: String,
+    pub attachments_inspected: usize,
+    pub urls_inspected: usize,
+    pub threat_name: Option<String>,
+    pub severity: String,
+    pub findings: Vec<String>,
+}
+
 /// Verdict cached in the in-memory LRU cache keyed by `(device_id, inode_or_file_index, mtime_secs, file_size)`.
 #[derive(Debug, Clone)]
 pub enum ScanVerdict {
@@ -838,7 +858,7 @@ fn is_content_scannable(path: &Path, head: &[u8]) -> bool {
         "sh" | "bash" | "zsh" | "ps1" | "psm1" | "bat" | "cmd" | "vbs" | "vbe" | "js" | "jse"
             | "hta" | "wsf" | "py" | "pl" | "desktop" | "service" | "exe" | "dll" | "scr"
             | "com" | "so" | "appimage" | "elf" | "bin" | "url" | "theme" | "website"
-            | "msg" | "eml" | "oft" | "rtf" | "zip" | "jar" | "apk" | "xpi" | "tar"
+            | "msg" | "eml" | "mbox" | "oft" | "rtf" | "zip" | "jar" | "apk" | "xpi" | "tar"
             | "gz" | "tgz" | "pdf" | "doc" | "docx" | "docm" | "xls" | "xlsx" | "xlsm"
             | "ppt" | "pptx" | "pptm" | "lnk" | "iso" | "vhd"
     )
@@ -2042,6 +2062,684 @@ fn inspect_pdf_buffer(
     None
 }
 
+fn decode_quoted_printable(input: &str) -> Vec<u8> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    while i < bytes.len() && out.len() < MAX_MEMBER_UNPACK_BYTES {
+        if bytes[i] == b'=' {
+            if i + 2 < bytes.len() && bytes[i + 1] == b'\r' && bytes[i + 2] == b'\n' {
+                i += 3;
+                continue;
+            }
+            if i + 1 < bytes.len() && (bytes[i + 1] == b'\n' || bytes[i + 1] == b'\r') {
+                i += 2;
+                continue;
+            }
+            if i + 2 < bytes.len() {
+                let h1 = bytes[i + 1] as char;
+                let h2 = bytes[i + 2] as char;
+                if let (Some(d1), Some(d2)) = (h1.to_digit(16), h2.to_digit(16)) {
+                    out.push(((d1 << 4) | d2) as u8);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+fn decode_mime_base64(input: &str) -> Option<Vec<u8>> {
+    let cleaned: Vec<u8> = input
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .take(MAX_MEMBER_UNPACK_BYTES)
+        .collect();
+    if cleaned.len() < 4 {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(&cleaned)
+        .or_else(|_| {
+            let trimmed = cleaned
+                .iter()
+                .copied()
+                .take_while(|&b| b != b'=')
+                .collect::<Vec<u8>>();
+            base64::engine::general_purpose::STANDARD_NO_PAD.decode(&trimmed)
+        })
+        .ok()
+}
+
+fn split_headers_and_body(raw: &str) -> (&str, &str) {
+    if let Some(idx) = raw.find("\r\n\r\n") {
+        (&raw[..idx], &raw[idx + 4..])
+    } else if let Some(idx) = raw.find("\n\n") {
+        (&raw[..idx], &raw[idx + 2..])
+    } else {
+        (raw, "")
+    }
+}
+
+fn unfold_email_headers(header_block: &str) -> Vec<(String, String)> {
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for line in header_block.lines() {
+        let line = line.trim_end_matches('\r');
+        if (line.starts_with(' ') || line.starts_with('\t')) && !headers.is_empty() {
+            if let Some((_, val)) = headers.last_mut() {
+                val.push(' ');
+                val.push_str(line.trim());
+            }
+        } else if let Some((k, v)) = line.split_once(':') {
+            headers.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
+        }
+    }
+    headers
+}
+
+fn extract_mime_param(header_val: &str, param_name: &str) -> Option<String> {
+    let target = format!("{}=", param_name.to_ascii_lowercase());
+    for seg in header_val.split(';') {
+        let trimmed = seg.trim();
+        let low = trimmed.to_ascii_lowercase();
+        if let Some( idx ) = low.find(&target) {
+            if idx == 0 || !low.as_bytes()[idx - 1].is_ascii_alphanumeric() {
+                let raw_val = trimmed[idx + target.len()..].trim();
+                let unquoted = raw_val
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .trim()
+                    .to_string();
+                if !unquoted.is_empty() {
+                    return Some(unquoted);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_email_address_domain(header_val: &str) -> Option<String> {
+    let addr_part = if let (Some(lt), Some(gt)) = (header_val.rfind('<'), header_val.rfind('>')) {
+        if lt < gt {
+            &header_val[lt + 1..gt]
+        } else {
+            header_val
+        }
+    } else {
+        header_val
+    };
+    let domain = addr_part
+        .rsplit('@')
+        .next()?
+        .trim()
+        .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
+        .to_ascii_lowercase();
+    if domain.contains('.') && !domain.contains(' ') {
+        Some(domain)
+    } else {
+        None
+    }
+}
+
+fn detect_display_name_brand_or_domain_spoof(from_val: &str, actual_domain: &str) -> Option<String> {
+    let Some(lt) = from_val.rfind('<') else {
+        return None;
+    };
+    let display = from_val[..lt]
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_ascii_lowercase();
+    if display.is_empty() {
+        return None;
+    }
+    // 1. Display name embeds an @domain.tld different from the actual angle-bracket sender domain
+    if let Some(at_pos) = display.find('@') {
+        let rest = &display[at_pos + 1..];
+        let spoof_dom: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-')
+            .collect();
+        if spoof_dom.contains('.')
+            && spoof_dom != actual_domain
+            && !actual_domain.ends_with(&format!(".{}", spoof_dom))
+        {
+            return Some(format!(
+                "Display name impersonates '@{}' while actual sender domain is '{}'",
+                spoof_dom, actual_domain
+            ));
+        }
+    }
+    // 2. Display name impersonates high-value brand while sender is an unrelated domain
+    const BRAND_DOMAINS: &[(&str, &[&str])] = &[
+        ("paypal", &["paypal.com", "paypal-communication.com"]),
+        ("microsoft", &["microsoft.com", "office.com", "live.com", "outlook.com"]),
+        ("apple", &["apple.com", "icloud.com"]),
+        ("docusign", &["docusign.net", "docusign.com"]),
+        ("chase bank", &["chase.com", "jpmchase.com"]),
+        ("bank of america", &["bankofamerica.com", "bofa.com"]),
+    ];
+    for (brand, allowed_doms) in BRAND_DOMAINS {
+        if display.contains(brand)
+            && !allowed_doms
+                .iter()
+                .any(|d| actual_domain == *d || actual_domain.ends_with(&format!(".{}", d)))
+        {
+            return Some(format!(
+                "Brand display name '{}' sent from unauthorized domain '{}'",
+                brand, actual_domain
+            ));
+        }
+    }
+    None
+}
+
+fn is_html_smuggling_payload(lower_html: &str) -> bool {
+    let has_blob = lower_html.contains("new blob(")
+        || lower_html.contains("window.blob")
+        || lower_html.contains("application/octet-stream")
+        || lower_html.contains("application/x-msdownload");
+    let has_url_or_save = lower_html.contains("createobjecturl")
+        || lower_html.contains("mssaveoropenblob")
+        || lower_html.contains("mssaveblob");
+    let has_decode = lower_html.contains("atob(")
+        || lower_html.contains("uint8array")
+        || lower_html.contains("fromcharcode");
+    has_blob && has_url_or_save && has_decode
+}
+
+fn inspect_mime_entity(
+    virtual_path: &str,
+    headers: &[(String, String)],
+    body: &str,
+    depth: u8,
+    attachments_inspected: &mut usize,
+    urls_inspected: &mut usize,
+    findings: &mut Vec<String>,
+) -> Option<ThreatDetection> {
+    if depth > MAX_ARCHIVE_DEPTH {
+        return None;
+    }
+    let content_type = headers
+        .iter()
+        .find(|(k, _)| k == "content-type")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("text/plain");
+    let content_disp = headers
+        .iter()
+        .find(|(k, _)| k == "content-disposition")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+    let transfer_enc = headers
+        .iter()
+        .find(|(k, _)| k == "content-transfer-encoding")
+        .map(|(_, v)| v.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    // Handle multipart/* container recursively
+    if content_type.to_ascii_lowercase().contains("multipart/") {
+        if let Some(boundary) = extract_mime_param(content_type, "boundary") {
+            let delim = format!("--{}", boundary);
+            let end_delim = format!("--{}--", boundary);
+            for (part_idx, raw_part) in body.split(&delim).skip(1).take(MAX_ARCHIVE_ENTRIES).enumerate() {
+                let trimmed_part = raw_part.trim_start_matches(['\r', '\n']);
+                if trimmed_part.starts_with("--") || raw_part.contains(&end_delim) && trimmed_part.is_empty() {
+                    break;
+                }
+                let clean_part = trimmed_part
+                    .strip_suffix(&end_delim)
+                    .unwrap_or(trimmed_part);
+                let (p_hdr_raw, p_body) = split_headers_and_body(clean_part);
+                let p_headers = unfold_email_headers(p_hdr_raw);
+                let part_vpath = format!("{}::mime_{}", virtual_path, part_idx + 1);
+                if let Some(det) = inspect_mime_entity(
+                    &part_vpath,
+                    &p_headers,
+                    p_body,
+                    depth + 1,
+                    attachments_inspected,
+                    urls_inspected,
+                    findings,
+                ) {
+                    return Some(det);
+                }
+            }
+            return None;
+        }
+    }
+
+    let att_name = extract_mime_param(content_disp, "filename")
+        .or_else(|| extract_mime_param(content_type, "name"));
+
+    let decoded_bytes = if transfer_enc.contains("base64") {
+        decode_mime_base64(body).unwrap_or_else(|| body.as_bytes().to_vec())
+    } else if transfer_enc.contains("quoted-printable") {
+        decode_quoted_printable(body)
+    } else {
+        body.as_bytes().to_vec()
+    };
+
+    if decoded_bytes.is_empty() {
+        return None;
+    }
+
+    let part_sha = hex::encode(Sha256::digest(&decoded_bytes));
+    let part_entropy = calculate_entropy(&decoded_bytes);
+
+    if let Some(ref fname) = att_name {
+        *attachments_inspected += 1;
+        let part_vpath = format!("{}::attachment({})", virtual_path, fname);
+
+        if fname.contains('\u{202E}')
+            || fname.contains('\u{202B}')
+            || fname.contains('\u{202D}')
+            || DOUBLE_EXT_REGEX.is_match(fname)
+        {
+            findings.push(format!("Masqueraded MIME attachment filename: {}", fname));
+            return Some(detection(
+                &part_vpath,
+                &part_sha,
+                part_entropy,
+                "Heur.Mail.MasqueradeAttachment",
+                "MailGateway.Attachment",
+                "Critical",
+                "Mail Gateway MIME Inspector",
+                format!(
+                    "Email attachment '{}' uses double-extension or Unicode RLO masquerading.",
+                    fname
+                ),
+            ));
+        }
+
+        if let Some(det) = scan_buffer_layers(
+            &part_vpath,
+            fname,
+            &decoded_bytes,
+            &part_sha,
+            depth + 1,
+            false,
+        ) {
+            findings.push(format!(
+                "Malicious MIME attachment '{}': {}",
+                fname, det.threat_name
+            ));
+            return Some(det);
+        }
+
+        let ext = Path::new(fname)
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if matches!(
+            ext.as_str(),
+            "exe" | "scr" | "hta" | "vbs" | "vbe" | "jse" | "wsf" | "bat" | "cmd" | "ps1" | "lnk" | "cpl"
+        ) {
+            findings.push(format!("Blocked high-risk executable attachment: {}", fname));
+            return Some(detection(
+                &part_vpath,
+                &part_sha,
+                part_entropy,
+                "Heur.Mail.ExecutableAttachmentDropper",
+                "MailGateway.Attachment",
+                "High",
+                "Mail Gateway MIME Policy Engine",
+                format!(
+                    "Email carries high-risk executable or script attachment ('{}').",
+                    fname
+                ),
+            ));
+        }
+    } else {
+        let text_lossy = String::from_utf8_lossy(&decoded_bytes);
+        let lower_text = text_lossy.to_ascii_lowercase();
+        let is_html = content_type.to_ascii_lowercase().contains("text/html")
+            || lower_text.contains("<html")
+            || lower_text.contains("<script");
+
+        if is_html && is_html_smuggling_payload(&lower_text) {
+            findings.push("HTML Smuggling payload (Blob + createObjectURL + Base64/TypedArray)".to_string());
+            return Some(detection(
+                virtual_path,
+                &part_sha,
+                part_entropy,
+                "Heur.Mail.HTMLSmugglingDropper",
+                "MailGateway.Exploit",
+                "Critical",
+                "Mail Gateway HTML Smuggling Guard",
+                "Email HTML body constructs an in-browser binary payload via JavaScript Blob/createObjectURL smuggling.".to_string(),
+            ));
+        }
+
+        static EMAIL_URL_RE: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r#"https?://[^\s"'<>)\]]+"#).unwrap());
+        for m in EMAIL_URL_RE.find_iter(&text_lossy).take(24) {
+            *urls_inspected += 1;
+            let url = m.as_str();
+            let verdict = realtime_shield::evaluate_url_safety(url);
+            if !verdict.safe {
+                findings.push(format!("Malicious URL in email body: {} ({})", url, verdict.category));
+                return Some(detection(
+                    virtual_path,
+                    &part_sha,
+                    part_entropy,
+                    "Heur.Mail.PhishingOrMalwareLink",
+                    "MailGateway.Phishing",
+                    "High",
+                    "Mail Gateway URL Reputation Engine",
+                    format!(
+                        "Email embeds blocked phishing/malware URL '{}' ({}: {}).",
+                        url, verdict.category, verdict.reason
+                    ),
+                ));
+            }
+        }
+
+        if let Some(det) = scan_buffer_layers(
+            virtual_path,
+            "email_body.txt",
+            &decoded_bytes,
+            &part_sha,
+            depth + 1,
+            false,
+        ) {
+            findings.push(format!("Malicious payload in email body: {}", det.threat_name));
+            return Some(det);
+        }
+    }
+
+    None
+}
+
+/// Inspect a raw RFC 5322 `.eml` / MIME message across headers (SPF/DKIM/DMARC, display-name &
+/// Reply-To spoofing), multi-part Base64/Quoted-Printable attachments, HTML smuggling, and body URLs.
+pub fn inspect_raw_email_gateway(
+    virtual_path: &str,
+    raw_email: &[u8],
+    depth: u8,
+) -> EmailGatewayReport {
+    let raw_str = String::from_utf8_lossy(raw_email);
+    let (hdr_block, body_block) = split_headers_and_body(&raw_str);
+    let headers = unfold_email_headers(hdr_block);
+
+    let get_hdr = |name: &str| -> String {
+        headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    };
+
+    let sender_from = get_hdr("from");
+    let reply_to = get_hdr("reply-to");
+    let return_path = get_hdr("return-path");
+    let subject = get_hdr("subject");
+    let auth_results = format!(
+        "{} {}",
+        get_hdr("authentication-results"),
+        get_hdr("received-spf")
+    )
+    .to_ascii_lowercase();
+
+    let parse_auth_token = |key: &str| -> String {
+        for tok in ["fail", "softfail", "temperror", "permerror", "none", "pass"] {
+            if auth_results.contains(&format!("{}={}", key, tok)) {
+                return tok.to_string();
+            }
+        }
+        if key == "spf" && auth_results.starts_with("fail") {
+            return "fail".to_string();
+        }
+        if key == "spf" && auth_results.starts_with("pass") {
+            return "pass".to_string();
+        }
+        "not_present".to_string()
+    };
+
+    let spf_status = parse_auth_token("spf");
+    let dkim_status = parse_auth_token("dkim");
+    let dmarc_status = parse_auth_token("dmarc");
+
+    let mut findings = Vec::new();
+    let mut risk_score: u8 = 0;
+
+    let from_domain = extract_email_address_domain(&sender_from);
+    let reply_domain = extract_email_address_domain(&reply_to);
+
+    if let Some(ref f_dom) = from_domain {
+        if let Some(spoof_msg) = detect_display_name_brand_or_domain_spoof(&sender_from, f_dom) {
+            findings.push(spoof_msg);
+            risk_score = risk_score.saturating_add(75);
+        }
+    }
+
+    let auth_failed = spf_status == "fail"
+        || spf_status == "softfail"
+        || dkim_status == "fail"
+        || dmarc_status == "fail";
+    if auth_failed {
+        findings.push(format!(
+            "Email authentication failure (SPF={}, DKIM={}, DMARC={})",
+            spf_status, dkim_status, dmarc_status
+        ));
+        risk_score = risk_score.saturating_add(45);
+    }
+
+    if let (Some(ref f_dom), Some(ref r_dom)) = (&from_domain, &reply_domain) {
+        if f_dom != r_dom
+            && !r_dom.ends_with(&format!(".{}", f_dom))
+            && !f_dom.ends_with(&format!(".{}", r_dom))
+        {
+            findings.push(format!(
+                "Cross-domain Reply-To mismatch (From '{}' vs Reply-To '{}')",
+                f_dom, r_dom
+            ));
+            risk_score = risk_score.saturating_add(35);
+        }
+    }
+
+    let lower_subj_body = format!("{} {}", subject, body_block).to_ascii_lowercase();
+    let has_phish_lure = [
+        "verify your account",
+        "urgent wire transfer",
+        "password expire",
+        "unusual sign-in",
+        "payment suspended",
+        "update your billing",
+        "security alert",
+    ]
+    .iter()
+    .any(|k| lower_subj_body.contains(k));
+    if has_phish_lure && (auth_failed || risk_score >= 35) {
+        findings.push("High-urgency credential or financial social-engineering lure".to_string());
+        risk_score = risk_score.saturating_add(30);
+    }
+
+    let mut attachments_inspected = 0usize;
+    let mut urls_inspected = 0usize;
+    let mime_det = inspect_mime_entity(
+        virtual_path,
+        &headers,
+        body_block,
+        depth,
+        &mut attachments_inspected,
+        &mut urls_inspected,
+        &mut findings,
+    );
+
+    if let Some(det) = mime_det {
+        return EmailGatewayReport {
+            safe: false,
+            verdict: if det.category.contains("Phishing") {
+                "QUARANTINE_PHISHING".to_string()
+            } else {
+                "REJECT_MALWARE".to_string()
+            },
+            risk_score: 98,
+            sender_from,
+            reply_to,
+            return_path,
+            subject,
+            spf_status,
+            dkim_status,
+            dmarc_status,
+            attachments_inspected,
+            urls_inspected,
+            threat_name: Some(det.threat_name),
+            severity: det.severity,
+            findings,
+        };
+    }
+
+    if risk_score >= 70 {
+        return EmailGatewayReport {
+            safe: false,
+            verdict: "QUARANTINE_PHISHING".to_string(),
+            risk_score: risk_score.min(95),
+            sender_from,
+            reply_to,
+            return_path,
+            subject,
+            spf_status,
+            dkim_status,
+            dmarc_status,
+            attachments_inspected,
+            urls_inspected,
+            threat_name: Some("Heur.Mail.PhishingHeaderSpoof".to_string()),
+            severity: "High".to_string(),
+            findings,
+        };
+    }
+
+    EmailGatewayReport {
+        safe: true,
+        verdict: if risk_score >= 40 {
+            "SUSPICIOUS_AUTH".to_string()
+        } else {
+            "CLEAN".to_string()
+        },
+        risk_score,
+        sender_from,
+        reply_to,
+        return_path,
+        subject,
+        spf_status,
+        dkim_status,
+        dmarc_status,
+        attachments_inspected,
+        urls_inspected,
+        threat_name: None,
+        severity: "Safe".to_string(),
+        findings,
+    }
+}
+
+fn is_rfc5322_email_buffer(file_name: &str, buffer: &[u8]) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    if lower.ends_with(".eml") || lower.ends_with(".mbox") {
+        return true;
+    }
+    let head = String::from_utf8_lossy(&buffer[..buffer.len().min(1024)]);
+    let mut header_hits = 0usize;
+    for line in head.lines().take(15) {
+        let l = line.to_ascii_lowercase();
+        if l.starts_with("from:")
+            || l.starts_with("return-path:")
+            || l.starts_with("received:")
+            || l.starts_with("mime-version:")
+            || l.starts_with("authentication-results:")
+            || l.starts_with("content-type: multipart/")
+        {
+            header_hits += 1;
+        }
+    }
+    header_hits >= 2
+}
+
+fn inspect_email_or_mbox_buffer(
+    virtual_path: &str,
+    file_name: &str,
+    buffer: &[u8],
+    outer_sha: &str,
+    outer_entropy: f64,
+    depth: u8,
+) -> Option<ThreatDetection> {
+    let raw_str = String::from_utf8_lossy(buffer);
+    let is_mbox = file_name.to_ascii_lowercase().ends_with(".mbox")
+        || (raw_str.starts_with("From ") && raw_str.contains("\nFrom:"));
+
+    let messages: Vec<&str> = if is_mbox {
+        raw_str
+            .split("\nFrom ")
+            .take(MAX_ARCHIVE_ENTRIES)
+            .collect()
+    } else {
+        vec![raw_str.as_ref()]
+    };
+
+    for (idx, msg) in messages.into_iter().enumerate() {
+        let msg_vpath = if messages_len_gt_one(idx, is_mbox) {
+            format!("{}::mbox_msg_{}", virtual_path, idx + 1)
+        } else {
+            virtual_path.to_string()
+        };
+        let rep = inspect_raw_email_gateway(&msg_vpath, msg.as_bytes(), depth);
+        if !rep.safe {
+            let threat = rep
+                .threat_name
+                .unwrap_or_else(|| "Heur.Mail.GatewayThreat".to_string());
+            let summary = if rep.findings.is_empty() {
+                format!("Mail Gateway blocked message ({}).", rep.verdict)
+            } else {
+                rep.findings.join(" | ")
+            };
+            return Some(detection(
+                &msg_vpath,
+                outer_sha,
+                outer_entropy,
+                &threat,
+                "MailGateway.Protection",
+                &rep.severity,
+                "Mail Gateway MIME & Header Inspector",
+                summary,
+            ));
+        }
+    }
+    None
+}
+
+fn messages_len_gt_one(idx: usize, is_mbox: bool) -> bool {
+    is_mbox || idx > 0
+}
+
+/// Scan an arbitrary in-memory file/archive byte stream (for the Local HTTP Gateway `/gateway/scan-stream` endpoint).
+pub fn scan_raw_stream_gateway(stream_name: &str, data: &[u8]) -> Option<ThreatDetection> {
+    if data.is_empty() || data.len() as u64 > MAX_FILE_BYTES {
+        return None;
+    }
+    let sha256_hex = hex::encode(Sha256::digest(data));
+    let entropy = calculate_entropy(data);
+    if let Some(det) = check_hash_layers(stream_name, &sha256_hex, entropy) {
+        return Some(det);
+    }
+    if data.starts_with(eicar_test_string().as_bytes()) {
+        return Some(detection(
+            stream_name,
+            &sha256_hex,
+            entropy,
+            "EICAR-Standard-AV-Test-Signature",
+            "Test.Signature",
+            "High",
+            "Signature Engine (EICAR)",
+            "Standard EICAR antivirus verification test stream.".to_string(),
+        ));
+    }
+    scan_buffer_layers(stream_name, stream_name, data, &sha256_hex, 0, false)
+}
+
 fn inspect_base64_layers(
     virtual_path: &str,
     content_lossy: &str,
@@ -2252,6 +2950,17 @@ fn scan_buffer_layers(
         } else if buffer.starts_with(b"\xD0\xCF\x11\xE0") {
             if let Some(det) = detect_office_macro_threat(virtual_path, sha256_hex, entropy, buffer)
             {
+                return Some(det);
+            }
+        } else if is_rfc5322_email_buffer(file_name, buffer) {
+            if let Some(det) = inspect_email_or_mbox_buffer(
+                virtual_path,
+                file_name,
+                buffer,
+                sha256_hex,
+                entropy,
+                depth,
+            ) {
                 return Some(det);
             }
         }
@@ -3348,5 +4057,90 @@ rule Test_Two_Of_Three {
                 "Real Windows Installer .msi binary stream must scan 100% clean"
             );
         }
+    }
+
+    #[test]
+    fn mail_gateway_unpacks_mime_attachments_html_smuggling_and_spoofed_headers() {
+        // 1. Multi-part .eml with a Base64-encoded .zip attachment containing EICAR
+        let eicar = eicar_test_string();
+        let zip_eicar = build_minimal_zip(&[("invoice_detail.txt", eicar.as_bytes(), false)]);
+        let b64_zip = base64::engine::general_purpose::STANDARD.encode(&zip_eicar);
+        let eml_zip = format!(
+            "From: sender@example.org\r\n\
+             To: user@company.org\r\n\
+             Subject: Monthly Statement\r\n\
+             MIME-Version: 1.0\r\n\
+             Content-Type: multipart/mixed; boundary=\"BOUND_123\"\r\n\r\n\
+             --BOUND_123\r\n\
+             Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n\
+             Please find attached.\r\n\
+             --BOUND_123\r\n\
+             Content-Type: application/zip; name=\"statement.zip\"\r\n\
+             Content-Disposition: attachment; filename=\"statement.zip\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n\
+             {}\r\n\
+             --BOUND_123--\r\n",
+            b64_zip
+        );
+        let rep_zip = inspect_raw_email_gateway("test.eml", eml_zip.as_bytes(), 0);
+        assert!(!rep_zip.safe);
+        assert_eq!(rep_zip.verdict, "REJECT_MALWARE");
+        assert_eq!(rep_zip.attachments_inspected, 1);
+        assert_eq!(
+            rep_zip.threat_name.as_deref(),
+            Some("EICAR-Standard-AV-Test-Signature")
+        );
+
+        // Also verify scan_buffer_layers on .eml catches it
+        let det_eml = scan_buffer_layers("mail.eml", "mail.eml", eml_zip.as_bytes(), "e1", 0, false);
+        assert_eq!(
+            det_eml.map(|d| d.threat_name).as_deref(),
+            Some("EICAR-Standard-AV-Test-Signature")
+        );
+
+        // 2. Quoted-Printable HTML Smuggling email (Blob + createObjectURL + atob)
+        let eml_smuggle = "From: alert@cdn-drop.org\r\n\
+            Subject: Document Shared\r\n\
+            MIME-Version: 1.0\r\n\
+            Content-Type: text/html; charset=utf-8\r\n\
+            Content-Transfer-Encoding: quoted-printable\r\n\r\n\
+            <html><body><script>\r\n\
+            var data =3D window.atob('TVqQAAMAAAAEAAAA');\r\n\
+            var b =3D new Blob([new Uint8Array(16)], {type: 'application/octet-stream'});\r\n\
+            var u =3D URL.createObjectURL(b);\r\n\
+            </script></body></html>\r\n";
+        let rep_smug = inspect_raw_email_gateway("smuggle.eml", eml_smuggle.as_bytes(), 0);
+        assert!(!rep_smug.safe);
+        assert_eq!(
+            rep_smug.threat_name.as_deref(),
+            Some("Heur.Mail.HTMLSmugglingDropper")
+        );
+
+        // 3. Brand/Display-Name Spoof + SPF/DMARC fail + Reply-To mismatch
+        let eml_phish = "From: \"PayPal Security <security@paypal.com>\" <mailer@offshore-drop.ru>\r\n\
+            Reply-To: harvest@evil-collector.ru\r\n\
+            Authentication-Results: mx.google.com; spf=fail; dkim=fail; dmarc=fail\r\n\
+            Subject: Urgent: Verify your account immediately\r\n\
+            MIME-Version: 1.0\r\n\
+            Content-Type: text/plain\r\n\r\n\
+            Please verify your account immediately as your payment suspended.\r\n";
+        let rep_phish = inspect_raw_email_gateway("phish.eml", eml_phish.as_bytes(), 0);
+        assert!(!rep_phish.safe);
+        assert_eq!(rep_phish.verdict, "QUARANTINE_PHISHING");
+        assert_eq!(
+            rep_phish.threat_name.as_deref(),
+            Some("Heur.Mail.PhishingHeaderSpoof")
+        );
+
+        // 4. Legitimate authenticated email with clean text attachment is CLEAN
+        let eml_clean = "From: \"GitHub Notifications\" <notifications@github.com>\r\n\
+            Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass\r\n\
+            Subject: Release v0.4.0 published\r\n\
+            MIME-Version: 1.0\r\n\
+            Content-Type: text/plain\r\n\r\n\
+            All checks have passed on https://github.com/Coraje187/Genesis-Seek.\r\n";
+        let rep_clean = inspect_raw_email_gateway("clean.eml", eml_clean.as_bytes(), 0);
+        assert!(rep_clean.safe);
+        assert_eq!(rep_clean.verdict, "CLEAN");
     }
 }

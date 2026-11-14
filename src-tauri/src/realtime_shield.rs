@@ -1092,6 +1092,25 @@ fn is_valid_loopback_host(host: &str) -> bool {
     )
 }
 
+fn extract_http_body(stream: &mut std::net::TcpStream, initial: &[u8]) -> Vec<u8> {
+    let Some(pos) = initial.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return Vec::new();
+    };
+    let hdr_str = String::from_utf8_lossy(&initial[..pos]);
+    let content_len = header_value(&hdr_str, "content-length")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(0)
+        .min(2 * 1024 * 1024);
+    let already = &initial[pos + 4..];
+    let mut body = Vec::with_capacity(content_len.max(already.len()));
+    body.extend_from_slice(&already[..already.len().min(2 * 1024 * 1024)]);
+    if content_len > body.len() {
+        let remaining = content_len - body.len();
+        let _ = stream.take(remaining as u64).read_to_end(&mut body);
+    }
+    body
+}
+
 fn handle_bridge_connection(
     mut stream: std::net::TcpStream,
     last_logged: Arc<Mutex<HashMap<String, Instant>>>,
@@ -1102,11 +1121,11 @@ fn handle_bridge_connection(
     let Ok(n) = stream.read(&mut buf) else {
         return;
     };
-    let req = String::from_utf8_lossy(&buf[..n]);
+    let req = String::from_utf8_lossy(&buf[..n]).to_string();
     let first_line = req.lines().next().unwrap_or("");
 
     if first_line.starts_with("OPTIONS ") {
-        let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-Genesis-Seek-Client\r\nConnection: close\r\n\r\n";
+        let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, X-Genesis-Seek-Client, X-Filename\r\nConnection: close\r\n\r\n";
         let _ = stream.write_all(resp.as_bytes());
         return;
     }
@@ -1330,6 +1349,64 @@ fn handle_bridge_connection(
                 true,
             )
         }
+    } else if target.starts_with("/gateway/scan-email") {
+        if restrict_sensitive_endpoint {
+            http_json(
+                "403 Forbidden",
+                r#"{"error":"Access denied: Mail Gateway endpoint restricted to local clients"}"#,
+                false,
+            )
+        } else {
+            let body_bytes = extract_http_body(&mut stream, &buf[..n]);
+            let report = scanner::inspect_raw_email_gateway("gateway://inbound.eml", &body_bytes, 0);
+            if !report.safe {
+                log_security_event(
+                    "Mail Gateway",
+                    &report.severity,
+                    &format!(
+                        "Mail Gateway Blocked {}: {}",
+                        report.verdict,
+                        report.threat_name.as_deref().unwrap_or("Heur.Mail.GatewayThreat")
+                    ),
+                    &format!("From: {} | Subject: {}", report.sender_from, report.subject),
+                    &report.verdict,
+                );
+            }
+            http_json(
+                "200 OK",
+                &serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string()),
+                false,
+            )
+        }
+    } else if target.starts_with("/gateway/scan-stream") {
+        if restrict_sensitive_endpoint {
+            http_json(
+                "403 Forbidden",
+                r#"{"error":"Access denied: Stream Gateway endpoint restricted to local clients"}"#,
+                false,
+            )
+        } else {
+            let stream_name = header_value(&req, "x-filename").unwrap_or("gateway_stream.bin").to_string();
+            let body_bytes = extract_http_body(&mut stream, &buf[..n]);
+            let det = scanner::scan_raw_stream_gateway(&stream_name, &body_bytes);
+            if let Some(ref d) = det {
+                log_security_event(
+                    "Network Gateway",
+                    &d.severity,
+                    &format!("Stream Gateway Blocked: {}", d.threat_name),
+                    &stream_name,
+                    "STREAM_REJECTED",
+                );
+            }
+            let payload = serde_json::json!({
+                "safe": det.is_none(),
+                "verdict": if det.is_some() { "FOUND" } else { "OK" },
+                "stream_name": stream_name,
+                "bytes_scanned": body_bytes.len(),
+                "detection": det,
+            });
+            http_json("200 OK", &payload.to_string(), false)
+        }
     } else if target.starts_with("/sentinel-profile") {
         if restrict_sensitive_endpoint {
             http_json(
@@ -1343,7 +1420,7 @@ fn handle_bridge_connection(
     } else {
         http_json(
             "200 OK",
-            r#"{"service":"Genesis Seek Browser Guard Bridge","status":"active","version":"v0.3.8 Enterprise","app_version":"0.3.8","extension_version":"0.3.8","latest_extension_version":"0.3.8","protection_health":100}"#,
+            r#"{"service":"Genesis Seek Browser, Mail & Stream Gateway Bridge","status":"active","version":"v0.4.0 Enterprise","app_version":"0.4.0","extension_version":"0.4.0","latest_extension_version":"0.4.0","mail_gateway":"active","stream_gateway":"active","protection_health":100}"#,
             true,
         )
     };

@@ -8,7 +8,7 @@ if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Path $outDir | Out-Null
 
 $ver = $env:GITHUB_REF_NAME
-if (-not $ver) { $ver = "v0.3.8" }
+if (-not $ver) { $ver = "v0.4.0" }
 $verNum = if ($ver.StartsWith('v')) { $ver.Substring(1) } else { $ver }
 
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)

@@ -41,7 +41,7 @@ const EMBEDDED_ICON_128: &[u8] = include_bytes!("../../browser-extension/icons/i
 const FIREFOX_MANIFEST_JSON: &str = r#"{
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.3.8",
+  "version": "0.4.0",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",
@@ -97,7 +97,7 @@ const FIREFOX_MANIFEST_JSON: &str = r#"{
 const CHROMIUM_MANIFEST_JSON: &str = r#"{
   "manifest_version": 3,
   "name": "Genesis Seek Browser Guard",
-  "version": "0.3.8",
+  "version": "0.4.0",
   "description": "Real-time phishing, IDN homograph, cryptojacking, and drive-by malware blocker synced with Genesis Seek Endpoint Defense.",
   "permissions": [
     "tabs",
@@ -1169,7 +1169,7 @@ mod extension_tests {
         );
         let parsed: serde_json::Value =
             serde_json::from_slice(&manifest).expect("manifest.json must be valid JSON");
-        assert_eq!(parsed["version"], "0.3.8");
+        assert_eq!(parsed["version"], "0.4.0");
         assert_eq!(
             parsed["browser_specific_settings"]["gecko"]["id"],
             "browser-guard@genesisseek.io"

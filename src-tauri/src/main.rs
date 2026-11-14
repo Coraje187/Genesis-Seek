@@ -421,6 +421,37 @@ fn harden_linux_kernel_mptcp(disable_mptcp: bool) -> Result<kernel_defense::Linu
     kernel_defense::harden_linux_kernel_mptcp(disable_mptcp)
 }
 
+#[tauri::command]
+fn inspect_email_gateway_sample(raw_email: String) -> scanner::EmailGatewayReport {
+    let report = scanner::inspect_raw_email_gateway("ui://mail-gateway.eml", raw_email.as_bytes(), 0);
+    if !report.safe {
+        realtime_shield::log_security_event(
+            "Mail Gateway",
+            &report.severity,
+            &format!(
+                "Mail Gateway Blocked {}: {}",
+                report.verdict,
+                report.threat_name.as_deref().unwrap_or("Heur.Mail.GatewayThreat")
+            ),
+            &format!("From: {} | Subject: {}", report.sender_from, report.subject),
+            &report.verdict,
+        );
+    }
+    report
+}
+
+#[tauri::command]
+fn get_network_gateway_status() -> threat_intel_and_net::NetworkGatewayStatus {
+    threat_intel_and_net::get_network_gateway_status()
+}
+
+#[tauri::command]
+fn toggle_network_gateway_sinkhole(
+    enable: bool,
+) -> Result<threat_intel_and_net::NetworkGatewayStatus, String> {
+    threat_intel_and_net::set_network_gateway_sinkhole(enable)
+}
+
 #[cfg(target_os = "linux")]
 fn ensure_linux_autostart_configured() {
     let home = match dirs::home_dir() {
@@ -679,6 +710,9 @@ fn main() {
             get_live_memory_usage,
             audit_linux_kernel_mptcp,
             harden_linux_kernel_mptcp,
+            inspect_email_gateway_sample,
+            get_network_gateway_status,
+            toggle_network_gateway_sinkhole,
             threat_alert::get_pending_threat_alert,
             threat_alert::allowlist_and_trust_threat,
             threat_alert::quarantine_threat_file,

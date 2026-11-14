@@ -748,6 +748,47 @@
             </table>
           </div>
         </div>
+
+        <div class="panel-card" id="mail-network-gateway-panel">
+          <div class="panel-header">
+            <div>
+              <h3>Mail Gateway (RFC 5322 MIME) &amp; OS DNS Sinkhole Gateway</h3>
+              <p class="muted small">
+                Inspects inbound <code>.eml</code> / <code>.mbox</code> / SMTP streams (Base64 &amp; Quoted-Printable attachments, SPF/DKIM/DMARC, display-name spoofing, HTML smuggling) via <code>127.0.0.1:49152/gateway/scan-email</code> and enforces block-scoped OS DNS sinkholing.
+              </p>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="gateway-sinkhole-badge" class="sev-badge sev-Safe">GATEWAY ACTIVE</span>
+              <button type="button" class="btn btn-primary" id="btn-toggle-gateway-sinkhole" style="padding:6px 12px;font-size:0.8rem;">
+                🛡️ Enable OS DNS Sinkhole
+              </button>
+            </div>
+          </div>
+
+          <div class="muted small" id="gateway-status-text" style="margin-top:6px;">
+            Mail Gateway API: <code>http://127.0.0.1:49152/gateway/scan-email</code> • Stream Gateway API: <code>http://127.0.0.1:49152/gateway/scan-stream</code>
+          </div>
+
+          <div style="border-top:1px solid var(--border-subtle);margin-top:14px;padding-top:12px;">
+            <div style="font-weight:700;font-size:0.9rem;margin-bottom:8px;">Interactive RFC 5322 Mail Gateway Inspector</div>
+            <textarea
+              id="mail-gateway-input"
+              rows="5"
+              style="width:100%;background:var(--bg-input, #0b1120);color:var(--text-main, #f1f5f9);border:1px solid var(--border-subtle, #1e293b);border-radius:8px;padding:10px;font-family:monospace;font-size:0.8rem;"
+              placeholder="Paste raw RFC 5322 .eml message headers + MIME body to test SPF/DKIM/DMARC, display-name spoofing, HTML smuggling, and attachment unpacking..."
+            ></textarea>
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px;">
+              <div class="preset-chips">
+                <span class="muted small">Mail Gateway Test Samples:</span>
+                <button type="button" class="chip" data-mail-sample="phish">Spoofed PayPal + SPF Fail</button>
+                <button type="button" class="chip" data-mail-sample="smuggle">HTML Smuggling Dropper</button>
+                <button type="button" class="chip" data-mail-sample="clean">Authenticated Clean Email</button>
+              </div>
+              <button type="button" class="btn btn-primary" id="btn-scan-mail-gateway">Inspect Email via Gateway</button>
+            </div>
+            <div id="mail-gateway-result-card" class="url-result-card hidden" style="margin-top:12px;"></div>
+          </div>
+        </div>
       </section>
 
       <!-- TAB 5: PROCESS & STARTUP GUARD -->

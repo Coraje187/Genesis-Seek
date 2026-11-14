@@ -794,6 +794,7 @@ async function refreshNetworkAndFeeds() {
   const feed = await invokeBackend("get_feed_status");
   renderFeedStatus(feed);
   await refreshVtStatus();
+  await refreshGatewayStatus();
 
   const sockets = await invokeBackend("get_network_connections");
   const tbody = document.getElementById("network-tbody");
@@ -1121,6 +1122,121 @@ document.querySelectorAll(".chip[data-vt]").forEach((chip) => {
     const input = document.getElementById("vt-lookup-input");
     if (input) input.value = val;
     runVtLookup(val);
+  });
+});
+
+// Mail Gateway (RFC 5322 MIME) & OS DNS Sinkhole Gateway
+let currentGatewayState = null;
+
+async function refreshGatewayStatus() {
+  try {
+    const st = await invokeBackend("get_network_gateway_status");
+    if (!st) return;
+    currentGatewayState = st;
+    const badge = document.getElementById("gateway-sinkhole-badge");
+    const statusText = document.getElementById("gateway-status-text");
+    const btn = document.getElementById("btn-toggle-gateway-sinkhole");
+
+    if (badge) {
+      badge.textContent = st.sinkhole_enabled
+        ? `SINKHOLE ARMED (${st.sinkholed_domains_count})`
+        : "MAIL & STREAM GATEWAY ACTIVE";
+      badge.className = "sev-badge sev-Safe";
+    }
+    if (statusText && st.status_message) {
+      statusText.innerHTML = `${st.status_message} • Mail API: <code>${st.mail_gateway_endpoint}</code> • Stream API: <code>${st.stream_gateway_endpoint}</code>`;
+    }
+    if (btn) {
+      btn.textContent = st.sinkhole_enabled
+        ? "✓ Disable OS DNS Sinkhole"
+        : "🛡️ Enable OS DNS Sinkhole";
+      btn.className = st.sinkhole_enabled ? "btn btn-outline" : "btn btn-primary";
+    }
+  } catch (e) {}
+}
+
+const btnToggleSinkhole = document.getElementById("btn-toggle-gateway-sinkhole");
+if (btnToggleSinkhole) {
+  btnToggleSinkhole.addEventListener("click", async () => {
+    const nextState = currentGatewayState ? !currentGatewayState.sinkhole_enabled : true;
+    await invokeBackend("toggle_network_gateway_sinkhole", { enable: nextState });
+    await refreshGatewayStatus();
+    await refreshEvents();
+  });
+}
+
+const MAIL_SAMPLES = {
+  phish:
+    'From: "PayPal Security <security@paypal.com>" <alert@offshore-drop.ru>\r\n' +
+    "Reply-To: harvest@evil-collector.ru\r\n" +
+    "Authentication-Results: mx.google.com; spf=fail; dkim=fail; dmarc=fail\r\n" +
+    "Subject: Urgent: Verify your account immediately\r\n" +
+    "MIME-Version: 1.0\r\n" +
+    "Content-Type: text/plain\r\n\r\n" +
+    "Please verify your account immediately as your payment suspended.\r\n",
+  smuggle:
+    "From: alert@cdn-drop.org\r\n" +
+    "Subject: Shared Invoice Document\r\n" +
+    "MIME-Version: 1.0\r\n" +
+    "Content-Type: text/html; charset=utf-8\r\n" +
+    "Content-Transfer-Encoding: quoted-printable\r\n\r\n" +
+    "<html><body><script>\r\n" +
+    "var data =3D window.atob('TVqQAAMAAAAEAAAA');\r\n" +
+    "var b =3D new Blob([new Uint8Array(16)], {type: 'application/octet-stream'});\r\n" +
+    "var u =3D URL.createObjectURL(b);\r\n" +
+    "</script></body></html>\r\n",
+  clean:
+    'From: "GitHub Notifications" <notifications@github.com>\r\n' +
+    "Authentication-Results: mx.google.com; spf=pass; dkim=pass; dmarc=pass\r\n" +
+    "Subject: Release v0.4.0 published\r\n" +
+    "MIME-Version: 1.0\r\n" +
+    "Content-Type: text/plain\r\n\r\n" +
+    "All security checks passed on https://github.com/Coraje187/Genesis-Seek.\r\n",
+};
+
+async function runMailGatewayInspection(rawEmail) {
+  if (!rawEmail || !rawEmail.trim()) return;
+  const card = document.getElementById("mail-gateway-result-card");
+  if (!card) return;
+  card.classList.remove("hidden");
+  const res = await invokeBackend("inspect_email_gateway_sample", { rawEmail });
+  if (!res) return;
+  const sevClass = res.safe ? "sev-Safe" : res.severity === "Critical" ? "sev-Critical" : "sev-High";
+  const findingsHtml =
+    res.findings && res.findings.length
+      ? `<div class="small" style="margin-top:6px;"><strong>Gateway Findings:</strong> <code>${res.findings.join(" • ")}</code></div>`
+      : "";
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div>
+        <span class="sev-badge ${sevClass}">${res.verdict}</span>
+        <strong style="margin-left:8px;font-size:0.95rem;">${res.threat_name || "Clean / Verified RFC 5322 Message"}</strong>
+      </div>
+      <div class="pill-tag">Risk Score: ${res.risk_score}/100</div>
+    </div>
+    <div class="muted small" style="margin-top:8px;">
+      <strong>From:</strong> <code>${res.sender_from || "N/A"}</code> • <strong>SPF:</strong> <code>${res.spf_status}</code> • <strong>DKIM:</strong> <code>${res.dkim_status}</code> • <strong>DMARC:</strong> <code>${res.dmarc_status}</code> • <strong>Attachments:</strong> ${res.attachments_inspected}
+    </div>
+    ${findingsHtml}
+  `;
+  await refreshEvents();
+}
+
+const btnScanMail = document.getElementById("btn-scan-mail-gateway");
+if (btnScanMail) {
+  btnScanMail.addEventListener("click", () => {
+    const val = document.getElementById("mail-gateway-input")?.value || "";
+    runMailGatewayInspection(val);
+  });
+}
+
+document.querySelectorAll(".chip[data-mail-sample]").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const key = chip.getAttribute("data-mail-sample") || "";
+    const sample = MAIL_SAMPLES[key] || "";
+    const input = document.getElementById("mail-gateway-input");
+    if (input) input.value = sample;
+    runMailGatewayInspection(sample);
   });
 });
 

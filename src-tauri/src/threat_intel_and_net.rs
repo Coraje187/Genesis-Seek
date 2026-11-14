@@ -618,11 +618,49 @@ fn parse_proc_hex_ip_port(hex_addr: &str) -> (String, u16) {
     ("0.0.0.0".to_string(), port)
 }
 
+fn is_private_or_loopback_ip(ip_or_addr: &str) -> bool {
+    let ip = ip_or_addr
+        .trim_start_matches('[')
+        .split(']')
+        .next()
+        .unwrap_or(ip_or_addr)
+        .split(':')
+        .next()
+        .unwrap_or(ip_or_addr)
+        .trim();
+    if ip.is_empty()
+        || ip == "0.0.0.0"
+        || ip == "*"
+        || ip == "::"
+        || ip == "::1"
+        || ip.starts_with("127.")
+        || ip.starts_with("10.")
+        || ip.starts_with("192.168.")
+        || ip.starts_with("169.254.")
+        || ip.starts_with("fe80:")
+    {
+        return true;
+    }
+    if let Some(rest) = ip.strip_prefix("172.") {
+        if let Some(second_octet) = rest.split('.').next().and_then(|s| s.parse::<u8>().ok()) {
+            if (16..=31).contains(&second_octet) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn evaluate_port_risk(port: u16, remote: &str) -> (String, String) {
     match port {
         4444 | 1337 | 31337 => (
             "Critical".to_string(),
             "Known Metasploit / reverse-shell default C2 port".to_string(),
+        ),
+        445 | 139 if !is_private_or_loopback_ip(remote) => (
+            "Critical".to_string(),
+            "Outbound WAN SMB connection (Port 445/139) — NTLM credential relay / CVE-2024-43451 risk"
+                .to_string(),
         ),
         3333 | 14444 | 45700 => (
             "Suspicious".to_string(),
@@ -645,6 +683,199 @@ fn evaluate_port_risk(port: u16, remote: &str) -> (String, String) {
             }
         }
     }
+}
+
+// ============================================================================
+// OS Network & DNS Sinkhole Gateway Protection
+// ============================================================================
+
+const SINKHOLE_START_MARKER: &str = "# >>> GENESIS SEEK NETWORK GATEWAY SINKHOLE START >>>";
+const SINKHOLE_END_MARKER: &str = "# <<< GENESIS SEEK NETWORK GATEWAY SINKHOLE END <<<";
+const MAX_SINKHOLE_HOSTS: usize = 1000;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkGatewayStatus {
+    pub sinkhole_enabled: bool,
+    pub os_hosts_synced: bool,
+    pub sinkholed_domains_count: usize,
+    pub local_sinkhole_path: String,
+    pub os_hosts_path: String,
+    pub mail_gateway_endpoint: String,
+    pub stream_gateway_endpoint: String,
+    pub status_message: String,
+}
+
+fn gateway_state_path() -> PathBuf {
+    feeds_dir().join("gateway_sinkhole_enabled.txt")
+}
+
+fn local_sinkhole_hosts_path() -> PathBuf {
+    feeds_dir().join("genesis_gateway_sinkhole.hosts")
+}
+
+fn os_hosts_file_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        PathBuf::from(sys_root)
+            .join("System32")
+            .join("drivers")
+            .join("etc")
+            .join("hosts")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/etc/hosts")
+    }
+}
+
+/// Pure, block-scoped OS `hosts` sinkhole builder that preserves all user entries outside the
+/// Genesis Seek markers and enforces `is_valid_and_blockable_domain` on every sinkholed domain.
+pub fn apply_sinkhole_hosts_block(
+    existing_hosts: &str,
+    domains: &[String],
+    enable: bool,
+) -> (String, usize) {
+    let mut kept_lines: Vec<&str> = Vec::new();
+    let mut inside_block = false;
+    for line in existing_hosts.lines() {
+        let trimmed = line.trim();
+        if trimmed == SINKHOLE_START_MARKER {
+            inside_block = true;
+            continue;
+        }
+        if trimmed == SINKHOLE_END_MARKER {
+            inside_block = false;
+            continue;
+        }
+        if !inside_block {
+            kept_lines.push(line);
+        }
+    }
+
+    while kept_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        kept_lines.pop();
+    }
+
+    let mut out = kept_lines.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+
+    if !enable {
+        return (out, 0);
+    }
+
+    let mut valid_domains: Vec<String> = domains
+        .iter()
+        .map(|d| d.trim().to_ascii_lowercase())
+        .filter(|d| is_valid_and_blockable_domain(d))
+        .collect();
+    valid_domains.sort();
+    valid_domains.dedup();
+    valid_domains.truncate(MAX_SINKHOLE_HOSTS);
+
+    if valid_domains.is_empty() {
+        return (out, 0);
+    }
+
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out.push_str(SINKHOLE_START_MARKER);
+    out.push('\n');
+    for dom in &valid_domains {
+        out.push_str(&format!("0.0.0.0 {}\n", dom));
+    }
+    out.push_str(SINKHOLE_END_MARKER);
+    out.push('\n');
+
+    (out, valid_domains.len())
+}
+
+fn collect_gateway_sinkhole_domains() -> Vec<String> {
+    let mut list: Vec<String> = vec![
+        "paypa1-security-verify.com".to_string(),
+        "coinhive.com".to_string(),
+        "crypto-loot.com".to_string(),
+        "authedmine.com".to_string(),
+        "evil-c2-panel.top".to_string(),
+        "phish-login.club".to_string(),
+    ];
+    if let Ok(dynamic) = DYNAMIC_BAD_DOMAINS.read() {
+        for d in dynamic.iter().take(MAX_SINKHOLE_HOSTS) {
+            list.push(d.clone());
+        }
+    }
+    list
+}
+
+pub fn get_network_gateway_status() -> NetworkGatewayStatus {
+    let enabled = fs::read_to_string(gateway_state_path())
+        .map(|s| s.trim() == "1" || s.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let os_path = os_hosts_file_path();
+    let local_path = local_sinkhole_hosts_path();
+    let os_synced = fs::read_to_string(&os_path)
+        .map(|c| c.contains(SINKHOLE_START_MARKER))
+        .unwrap_or(false);
+    let count = fs::read_to_string(&local_path)
+        .map(|c| c.lines().filter(|l| l.starts_with("0.0.0.0 ")).count())
+        .unwrap_or(0);
+
+    NetworkGatewayStatus {
+        sinkhole_enabled: enabled,
+        os_hosts_synced: os_synced,
+        sinkholed_domains_count: if enabled { count } else { 0 },
+        local_sinkhole_path: local_path.to_string_lossy().to_string(),
+        os_hosts_path: os_path.to_string_lossy().to_string(),
+        mail_gateway_endpoint: "http://127.0.0.1:49152/gateway/scan-email".to_string(),
+        stream_gateway_endpoint: "http://127.0.0.1:49152/gateway/scan-stream".to_string(),
+        status_message: if enabled && os_synced {
+            format!(
+                "OS Hosts Sinkhole & Local Mail/Stream Gateway Active ({} domains sinkholed)",
+                count
+            )
+        } else if enabled {
+            format!(
+                "Gateway Sinkhole Active ({} domains staged in {}; run as Admin/root to sync OS hosts)",
+                count,
+                local_path.display()
+            )
+        } else {
+            "Mail & Stream Gateway Active on 127.0.0.1:49152 • OS Hosts Sinkhole on Standby"
+                .to_string()
+        },
+    }
+}
+
+pub fn set_network_gateway_sinkhole(enable: bool) -> Result<NetworkGatewayStatus, String> {
+    let _ = fs::write(gateway_state_path(), if enable { "1" } else { "0" });
+    let domains = collect_gateway_sinkhole_domains();
+    let local_path = local_sinkhole_hosts_path();
+    let (local_content, count) = apply_sinkhole_hosts_block("", &domains, enable);
+    fs::write(&local_path, &local_content)
+        .map_err(|e| format!("Failed to write local gateway sinkhole file: {}", e))?;
+
+    let os_path = os_hosts_file_path();
+    if let Ok(existing_os) = fs::read_to_string(&os_path) {
+        let (updated_os, _) = apply_sinkhole_hosts_block(&existing_os, &domains, enable);
+        let _ = fs::write(&os_path, updated_os);
+    }
+
+    realtime_shield::log_security_event(
+        "Network Gateway",
+        "Info",
+        if enable {
+            "Network Gateway DNS Sinkhole Enabled"
+        } else {
+            "Network Gateway DNS Sinkhole Disabled"
+        },
+        &format!("{} malicious domains managed", count),
+        if enable { "Sinkhole Armed" } else { "Standby" },
+    );
+
+    Ok(get_network_gateway_status())
 }
 
 // ============================================================================
@@ -1616,6 +1847,37 @@ mod update_tests {
         ));
         assert!(!hashes.contains(EMPTY_FILE_SHA256));
         assert!(hashes.contains(&"b".repeat(64)));
+    }
+
+    #[test]
+    fn network_gateway_sinkhole_and_wan_smb_port_detection() {
+        let user_hosts = "127.0.0.1 localhost\n192.168.1.50 nas.local\n";
+        let doms = vec![
+            "evil-c2-panel.top".to_string(),
+            "github.com".to_string(), // must be rejected by PROTECTED_SAFE_DOMAINS
+            "phish-login.club".to_string(),
+        ];
+
+        let (armed, count) = apply_sinkhole_hosts_block(user_hosts, &doms, true);
+        assert_eq!(count, 2);
+        assert!(armed.contains("192.168.1.50 nas.local"));
+        assert!(armed.contains("0.0.0.0 evil-c2-panel.top"));
+        assert!(armed.contains("0.0.0.0 phish-login.club"));
+        assert!(!armed.contains("github.com"));
+
+        // Disabling cleanly removes only the Genesis Seek sinkhole block
+        let (disarmed, count_off) = apply_sinkhole_hosts_block(&armed, &doms, false);
+        assert_eq!(count_off, 0);
+        assert!(disarmed.contains("127.0.0.1 localhost"));
+        assert!(disarmed.contains("192.168.1.50 nas.local"));
+        assert!(!disarmed.contains("evil-c2-panel.top"));
+        assert!(!disarmed.contains(SINKHOLE_START_MARKER));
+
+        // Outbound WAN SMB port 445 is Critical; LAN SMB port 445 is Safe
+        let (wan_smb_risk, _) = evaluate_port_risk(445, "198.51.100.77:445");
+        assert_eq!(wan_smb_risk, "Critical");
+        let (lan_smb_risk, _) = evaluate_port_risk(445, "192.168.1.10:445");
+        assert_eq!(lan_smb_risk, "Safe");
     }
 }
 
