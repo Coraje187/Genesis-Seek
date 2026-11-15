@@ -8,6 +8,7 @@ static APP_HANDLE: Lazy<Mutex<Option<AppHandle>>> = Lazy::new(|| Mutex::new(None
 #[cfg(target_os = "linux")]
 mod linux_sni {
     use super::*;
+    use crate::realtime_shield::ShieldState;
     use glib::variant::{FromVariant, ToVariant};
     use glib::{Variant, VariantDict, VariantTy};
 
