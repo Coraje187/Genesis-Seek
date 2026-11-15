@@ -1350,10 +1350,17 @@ fn handle_bridge_connection(
             )
         }
     } else if target.starts_with("/gateway/scan-email") {
-        if restrict_sensitive_endpoint {
+        let has_client_hdr = header_value(&req, "x-genesis-seek-client").is_some();
+        if restrict_sensitive_endpoint || !has_client_hdr {
             http_json(
                 "403 Forbidden",
-                r#"{"error":"Access denied: Mail Gateway endpoint restricted to local clients"}"#,
+                r#"{"error":"Access denied: Mail Gateway requires local client header (X-Genesis-Seek-Client) and non-cross-site origin"}"#,
+                false,
+            )
+        } else if !threat_intel_and_net::is_http_gateway_enabled() {
+            http_json(
+                "403 Forbidden",
+                r#"{"error":"Local HTTP Mail Gateway is opt-in and currently disabled. Enable it in Network & Threat Feeds."}"#,
                 false,
             )
         } else {
@@ -1379,10 +1386,17 @@ fn handle_bridge_connection(
             )
         }
     } else if target.starts_with("/gateway/scan-stream") {
-        if restrict_sensitive_endpoint {
+        let has_client_hdr = header_value(&req, "x-genesis-seek-client").is_some();
+        if restrict_sensitive_endpoint || !has_client_hdr {
             http_json(
                 "403 Forbidden",
-                r#"{"error":"Access denied: Stream Gateway endpoint restricted to local clients"}"#,
+                r#"{"error":"Access denied: Stream Gateway requires local client header (X-Genesis-Seek-Client) and non-cross-site origin"}"#,
+                false,
+            )
+        } else if !threat_intel_and_net::is_http_gateway_enabled() {
+            http_json(
+                "403 Forbidden",
+                r#"{"error":"Local HTTP Stream Gateway is opt-in and currently disabled. Enable it in Network & Threat Feeds."}"#,
                 false,
             )
         } else {

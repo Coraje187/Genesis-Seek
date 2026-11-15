@@ -121,7 +121,7 @@ mod linux_sni {
         .filter(|&&b| b)
         .count();
         let pct = (active_count as u8) * 25;
-        let title = format!("Genesis Seek — {}% Protected ({}/4 Shields)", pct, active_count);
+        let title = format!("Genesis Seek — {}/4 Real-Time Shields Active", active_count);
         let subtitle = if pct == 100 {
             "All Real-Time Endpoint & Browser Shields Active".to_string()
         } else if pct == 0 {
@@ -494,7 +494,7 @@ fn init_windows_tray(app: &AppHandle) {
     let icon = app.default_window_icon().cloned();
 
     let mut builder = TrayIconBuilder::with_id("genesis-seek-tray")
-        .tooltip("Genesis Seek — 100% Protected (Real-Time Shield Active)")
+        .tooltip("Genesis Seek — 4/4 Real-Time Shields Active")
         .show_menu_on_left_click(false);
 
     if let Some(ic) = icon {
@@ -583,10 +583,9 @@ pub fn notify_tray_updated() {
                     .iter()
                     .filter(|&&b| b)
                     .count();
-                    let pct = (active_count as u8) * 25;
                     let tooltip = format!(
-                        "Genesis Seek — {}% Protected ({}/4 Shields Active)",
-                        pct, active_count
+                        "Genesis Seek — {}/4 Real-Time Shields Active",
+                        active_count
                     );
                     let _ = tray.set_tooltip(Some(tooltip));
                 }

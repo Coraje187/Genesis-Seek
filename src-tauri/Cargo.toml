@@ -1,8 +1,10 @@
 [package]
 name = "genesis-seek"
 version = "0.4.0"
-description = "Genesis Seek - Enterprise-Grade Cross-Platform Anti-Malware, Pre-Execution Guard & Browser Protection Suite"
-authors = ["Genesis Seek Security"]
+description = "Genesis Seek - Cross-Platform Endpoint Scanner, Pre-Execution Guard & Browser Protection Suite"
+authors = ["Genesis Grid Labs"]
+license = "MIT"
+repository = "https://github.com/Coraje187/Genesis-Seek"
 edition = "2021"
 
 [build-dependencies]

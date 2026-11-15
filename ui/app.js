@@ -1136,11 +1136,18 @@ async function refreshGatewayStatus() {
     const badge = document.getElementById("gateway-sinkhole-badge");
     const statusText = document.getElementById("gateway-status-text");
     const btn = document.getElementById("btn-toggle-gateway-sinkhole");
+    const btnHttp = document.getElementById("btn-toggle-http-gateway");
 
     if (badge) {
-      badge.textContent = st.sinkhole_enabled
-        ? `SINKHOLE ARMED (${st.sinkholed_domains_count})`
-        : "MAIL & STREAM GATEWAY ACTIVE";
+      if (st.sinkhole_enabled && st.http_gateway_enabled) {
+        badge.textContent = `SINKHOLE (${st.sinkholed_domains_count}) + HTTP GATEWAY ON`;
+      } else if (st.sinkhole_enabled) {
+        badge.textContent = `SINKHOLE ARMED (${st.sinkholed_domains_count})`;
+      } else if (st.http_gateway_enabled) {
+        badge.textContent = "HTTP GATEWAY ENABLED";
+      } else {
+        badge.textContent = "OPT-IN STANDBY";
+      }
       badge.className = "sev-badge sev-Safe";
     }
     if (statusText && st.status_message) {
@@ -1152,6 +1159,12 @@ async function refreshGatewayStatus() {
         : "🛡️ Enable OS DNS Sinkhole";
       btn.className = st.sinkhole_enabled ? "btn btn-outline" : "btn btn-primary";
     }
+    if (btnHttp) {
+      btnHttp.textContent = st.http_gateway_enabled
+        ? "✓ Disable HTTP Gateway (:49152)"
+        : "🔌 Enable HTTP Gateway (:49152)";
+      btnHttp.className = st.http_gateway_enabled ? "btn btn-primary" : "btn btn-outline";
+    }
   } catch (e) {}
 }
 
@@ -1160,6 +1173,16 @@ if (btnToggleSinkhole) {
   btnToggleSinkhole.addEventListener("click", async () => {
     const nextState = currentGatewayState ? !currentGatewayState.sinkhole_enabled : true;
     await invokeBackend("toggle_network_gateway_sinkhole", { enable: nextState });
+    await refreshGatewayStatus();
+    await refreshEvents();
+  });
+}
+
+const btnToggleHttpGateway = document.getElementById("btn-toggle-http-gateway");
+if (btnToggleHttpGateway) {
+  btnToggleHttpGateway.addEventListener("click", async () => {
+    const nextState = currentGatewayState ? !currentGatewayState.http_gateway_enabled : true;
+    await invokeBackend("toggle_http_gateway_api", { enable: nextState });
     await refreshGatewayStatus();
     await refreshEvents();
   });

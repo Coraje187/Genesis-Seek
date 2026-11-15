@@ -452,6 +452,13 @@ fn toggle_network_gateway_sinkhole(
     threat_intel_and_net::set_network_gateway_sinkhole(enable)
 }
 
+#[tauri::command]
+fn toggle_http_gateway_api(
+    enable: bool,
+) -> Result<threat_intel_and_net::NetworkGatewayStatus, String> {
+    threat_intel_and_net::set_http_gateway_enabled(enable)
+}
+
 #[cfg(target_os = "linux")]
 fn ensure_linux_autostart_configured() {
     let home = match dirs::home_dir() {
@@ -713,6 +720,7 @@ fn main() {
             inspect_email_gateway_sample,
             get_network_gateway_status,
             toggle_network_gateway_sinkhole,
+            toggle_http_gateway_api,
             threat_alert::get_pending_threat_alert,
             threat_alert::allowlist_and_trust_threat,
             threat_alert::quarantine_threat_file,

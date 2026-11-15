@@ -3917,8 +3917,13 @@ rule Test_Two_Of_Three {
             let _ = std::fs::remove_file(&tmp_vbs);
 
             // Generate real Windows Shell Link (.lnk) files via WScript.Shell COM to verify full MS-SHLLINK parsing
-            let real_mal_lnk = std::env::temp_dir().join(format!("gs_real_mal_{}.lnk", uuid::Uuid::new_v4()));
-            let real_benign_lnk = std::env::temp_dir().join(format!("gs_real_benign_{}.lnk", uuid::Uuid::new_v4()));
+            // Use target/ dir rather than %TEMP% so an active background Genesis Seek daemon does not auto-quarantine the test .lnk mid-test
+            let test_work_dir = std::env::current_dir()
+                .map(|d| d.join("target"))
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let _ = std::fs::create_dir_all(&test_work_dir);
+            let real_mal_lnk = test_work_dir.join(format!("gs_real_mal_{}.lnk", uuid::Uuid::new_v4()));
+            let real_benign_lnk = test_work_dir.join(format!("gs_real_benign_{}.lnk", uuid::Uuid::new_v4()));
             let ps_script = format!(
                 "$ws = New-Object -ComObject WScript.Shell; \
                  $s1 = $ws.CreateShortcut('{}'); \
@@ -4040,7 +4045,7 @@ rule Test_Two_Of_Three {
             );
         }
         let msi_path = Path::new(
-            r"C:\Users\Coraj\.gemini\antigravity\scratch\Genesis-Seek\src-tauri\target\release\bundle\msi\Genesis.Seek_0.3.8_x64_en-US.msi",
+            r"C:\Users\Coraj\.gemini\antigravity\scratch\Genesis-Seek\src-tauri\target\release\bundle\msi\Genesis.Seek_0.4.0_x64_en-US.msi",
         );
         if msi_path.exists() {
             let (_, msi_real_buf) = hash_and_sample(msi_path).unwrap();
@@ -4142,5 +4147,41 @@ rule Test_Two_Of_Three {
         let rep_clean = inspect_raw_email_gateway("clean.eml", eml_clean.as_bytes(), 0);
         assert!(rep_clean.safe);
         assert_eq!(rep_clean.verdict, "CLEAN");
+    }
+
+    #[test]
+    fn fuzz_resilience_malformed_and_truncated_parser_inputs_never_panic() {
+        // Feeds truncated, cyclic, and hostile byte sequences into every container/document parser
+        // (.zip, .tar.gz, PDF FlateDecode, MS-SHLLINK .lnk, OLE2 .msi, RFC 5322 MIME .eml)
+        let hostile_payloads: Vec<(&str, Vec<u8>)> = vec![
+            ("truncated.zip", vec![b'P', b'K', 0x03, 0x04, 0xFF, 0xFF, 0x00]),
+            ("corrupt_cd.zip", vec![b'P', b'K', 0x01, 0x02, 0x99, 0x88, 0x77, 0x66]),
+            ("truncated.tar.gz", vec![0x1F, 0x8B, 0x08, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]),
+            (
+                "truncated.pdf",
+                b"%PDF-1.7\n1 0 obj << /Filter /FlateDecode /OpenAction /JS >>\nstream\n\x78\x9c\xFF\x00\nendstream".to_vec(),
+            ),
+            (
+                "truncated.lnk",
+                vec![0x4C, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0xFF, 0xFF],
+            ),
+            (
+                "truncated.msi",
+                vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1, 0x00, 0x01],
+            ),
+            (
+                "recursive_boundary.eml",
+                b"Content-Type: multipart/mixed; boundary=\"A\"\r\n\r\n--A\r\nContent-Type: multipart/mixed; boundary=\"A\"\r\n\r\n--A--\r\n".to_vec(),
+            ),
+            (
+                "invalid_b64_qp.eml",
+                b"From: <a@b.c>\r\nContent-Transfer-Encoding: base64\r\n\r\n!!!!not_valid_base64====\r\n".to_vec(),
+            ),
+        ];
+
+        for (name, bytes) in hostile_payloads {
+            let _ = scan_buffer_layers(name, name, &bytes, "fuzz_sha", 0, false);
+            let _ = inspect_raw_email_gateway(name, &bytes, 0);
+        }
     }
 }

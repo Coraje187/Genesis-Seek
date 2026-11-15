@@ -696,6 +696,7 @@ const MAX_SINKHOLE_HOSTS: usize = 1000;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkGatewayStatus {
     pub sinkhole_enabled: bool,
+    pub http_gateway_enabled: bool,
     pub os_hosts_synced: bool,
     pub sinkholed_domains_count: usize,
     pub local_sinkhole_path: String,
@@ -707,6 +708,16 @@ pub struct NetworkGatewayStatus {
 
 fn gateway_state_path() -> PathBuf {
     feeds_dir().join("gateway_sinkhole_enabled.txt")
+}
+
+fn http_gateway_state_path() -> PathBuf {
+    feeds_dir().join("http_gateway_enabled.txt")
+}
+
+pub fn is_http_gateway_enabled() -> bool {
+    fs::read_to_string(http_gateway_state_path())
+        .map(|s| s.trim() == "1" || s.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 fn local_sinkhole_hosts_path() -> PathBuf {
@@ -814,6 +825,7 @@ pub fn get_network_gateway_status() -> NetworkGatewayStatus {
     let enabled = fs::read_to_string(gateway_state_path())
         .map(|s| s.trim() == "1" || s.trim().eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let http_enabled = is_http_gateway_enabled();
     let os_path = os_hosts_file_path();
     let local_path = local_sinkhole_hosts_path();
     let os_synced = fs::read_to_string(&os_path)
@@ -823,8 +835,15 @@ pub fn get_network_gateway_status() -> NetworkGatewayStatus {
         .map(|c| c.lines().filter(|l| l.starts_with("0.0.0.0 ")).count())
         .unwrap_or(0);
 
+    let http_label = if http_enabled {
+        "HTTP Gateway (:49152/gateway/*) Enabled"
+    } else {
+        "HTTP Gateway Opt-In (Standby)"
+    };
+
     NetworkGatewayStatus {
         sinkhole_enabled: enabled,
+        http_gateway_enabled: http_enabled,
         os_hosts_synced: os_synced,
         sinkholed_domains_count: if enabled { count } else { 0 },
         local_sinkhole_path: local_path.to_string_lossy().to_string(),
@@ -833,20 +852,37 @@ pub fn get_network_gateway_status() -> NetworkGatewayStatus {
         stream_gateway_endpoint: "http://127.0.0.1:49152/gateway/scan-stream".to_string(),
         status_message: if enabled && os_synced {
             format!(
-                "OS Hosts Sinkhole & Local Mail/Stream Gateway Active ({} domains sinkholed)",
-                count
+                "OS Hosts Sinkhole Active ({} domains) • {}",
+                count, http_label
             )
         } else if enabled {
             format!(
-                "Gateway Sinkhole Active ({} domains staged in {}; run as Admin/root to sync OS hosts)",
+                "Gateway Sinkhole Staged ({} domains in {}) • {}",
                 count,
-                local_path.display()
+                local_path.display(),
+                http_label
             )
         } else {
-            "Mail & Stream Gateway Active on 127.0.0.1:49152 • OS Hosts Sinkhole on Standby"
-                .to_string()
+            format!("{} • OS Hosts Sinkhole Opt-In (Standby)", http_label)
         },
     }
+}
+
+pub fn set_http_gateway_enabled(enable: bool) -> Result<NetworkGatewayStatus, String> {
+    fs::write(http_gateway_state_path(), if enable { "1" } else { "0" })
+        .map_err(|e| format!("Failed to persist HTTP gateway state: {}", e))?;
+    realtime_shield::log_security_event(
+        "Network Gateway",
+        "Info",
+        if enable {
+            "Local HTTP Mail/Stream Gateway Enabled (Opt-In)"
+        } else {
+            "Local HTTP Mail/Stream Gateway Disabled (Standby)"
+        },
+        "127.0.0.1:49152/gateway/*",
+        if enable { "Listening" } else { "Standby" },
+    );
+    Ok(get_network_gateway_status())
 }
 
 pub fn set_network_gateway_sinkhole(enable: bool) -> Result<NetworkGatewayStatus, String> {

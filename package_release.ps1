@@ -198,5 +198,22 @@ Copy-Item (Join-Path $base "README.md") (Join-Path $linStaging "README.md")
 Compress-Archive -Path (Join-Path $linStaging "*") -DestinationPath (Join-Path $outDir "genesis-seek-$ver-linux-installer.zip") -Force
 Remove-Item -Recurse -Force $linStaging
 
+# 6. Generate SHA256SUMS.txt for all packaged release assets (including NSIS/MSI if present)
+$bundleDirs = @(
+    (Join-Path $base "src-tauri\target\release\bundle\nsis"),
+    (Join-Path $base "src-tauri\target\release\bundle\msi")
+)
+$hashTargets = @(Get-ChildItem $outDir -File | Where-Object { $_.Name -ne "SHA256SUMS.txt" })
+foreach ($bdir in $bundleDirs) {
+    if (Test-Path $bdir) {
+        $hashTargets += Get-ChildItem $bdir -File -Include "*.exe","*.msi" -ErrorAction SilentlyContinue
+    }
+}
+$sumLines = foreach ($item in $hashTargets) {
+    $h = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+    "$h  $($item.Name)"
+}
+[System.IO.File]::WriteAllLines((Join-Path $outDir "SHA256SUMS.txt"), $sumLines, $Utf8NoBom)
+
 Write-Host "Packaging complete. Generated assets in ${outDir}:"
 Get-ChildItem $outDir | Select-Object Name, Length

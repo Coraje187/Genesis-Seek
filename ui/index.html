@@ -69,23 +69,23 @@
         var sidebarPct = document.getElementById("sidebar-shield-pct");
 
         var color = "var(--accent-emerald)";
-        var ringStatusLabel = "FULL PROTECTION";
+        var ringStatusLabel = "SHIELDS ACTIVE";
         if (pct === 75) {
           color = "var(--accent-amber)";
-          ringStatusLabel = "PARTIAL DEFENSE";
+          ringStatusLabel = "PARTIAL SHIELDS";
         } else if (pct === 50) {
           color = "var(--accent-amber)";
-          ringStatusLabel = "REDUCED DEFENSE";
+          ringStatusLabel = "REDUCED SHIELDS";
         } else if (pct === 25) {
           color = "var(--accent-danger)";
-          ringStatusLabel = "CRITICAL RISK";
+          ringStatusLabel = "1/4 ACTIVE";
         } else if (pct === 0) {
           color = "var(--accent-danger)";
-          ringStatusLabel = "UNPROTECTED!";
+          ringStatusLabel = "SHIELDS OFF";
         }
 
         if (scoreEl) {
-          scoreEl.textContent = pct + "%";
+          scoreEl.textContent = enabledCount + "/4";
           scoreEl.style.color = color;
         }
         if (labelEl) {
@@ -101,20 +101,20 @@
         }
         if (statusText) {
           if (pct === 100) {
-            statusText.textContent = "100% Protected — All 4 Real-Time Shields Active";
+            statusText.textContent = "4/4 Real-Time Shields Active — Endpoint & Browser Monitoring Armed";
           } else if (pct === 0) {
-            statusText.textContent = "0% Protected — WARNING: All Real-Time Shields Disabled!";
+            statusText.textContent = "0/4 Shields Active — WARNING: Real-Time Monitoring Disabled";
           } else {
-            statusText.textContent = pct + "% Protected — " + (4 - enabledCount) + " Shield(s) Disabled (" + disabledNames.join(", ") + ")";
+            statusText.textContent = enabledCount + "/4 Shields Active — " + (4 - enabledCount) + " Layer(s) Disabled (" + disabledNames.join(", ") + ")";
           }
         }
         if (barBadge) {
-          barBadge.textContent = "🛡️ In Bar: " + pct + "% (" + enabledCount + "/4)";
+          barBadge.textContent = "🛡️ In Bar: " + enabledCount + "/4 Active";
           barBadge.style.borderColor = color;
           barBadge.style.color = color;
         }
         if (sidebarPct) {
-          sidebarPct.textContent = pct + "% (" + enabledCount + "/4 Active)";
+          sidebarPct.textContent = enabledCount + "/4 Active";
           sidebarPct.style.color = color;
         }
 
@@ -179,7 +179,7 @@
         </div>
         <div class="telemetry-row">
           <span>Shield Integrity</span>
-          <strong id="sidebar-shield-pct" class="text-ok">100% (4/4 Active)</strong>
+          <strong id="sidebar-shield-pct" class="text-ok">4/4 Active</strong>
         </div>
         <div class="telemetry-row">
           <span>Pre-Exec Mode</span>
@@ -223,12 +223,12 @@
       <header class="topbar">
         <div class="status-pill" id="overall-status-pill">
           <span class="pulse-dot" id="overall-pulse"></span>
-          <span id="overall-status-text">100% Protected — All 4 Real-Time Shields Active</span>
+          <span id="overall-status-text">4/4 Real-Time Shields Active — Endpoint & Browser Monitoring Armed</span>
         </div>
 
         <div class="topbar-actions">
           <span class="pill-tag" id="bar-daemon-badge" title="Genesis Seek is actively registered in your desktop system bar / StatusNotifier tray">
-            🛡️ In Bar: 100% (4/4)
+            🛡️ In Bar: 4/4 Active
           </span>
 
           <!-- Persistent Theme Switcher: Obsidian Night vs Warm Cream Light -->
@@ -341,8 +341,8 @@
                     height="30"
                     style="margin-bottom: 2px;"
                   />
-                  <div class="ring-score" id="protection-score">100%</div>
-                  <div class="ring-label" id="protection-label">FULL PROTECTION</div>
+                  <div class="ring-score" id="protection-score">4/4</div>
+                  <div class="ring-label" id="protection-label">SHIELDS ACTIVE</div>
                 </div>
               </div>
             </div>
@@ -757,8 +757,11 @@
                 Inspects inbound <code>.eml</code> / <code>.mbox</code> / SMTP streams (Base64 &amp; Quoted-Printable attachments, SPF/DKIM/DMARC, display-name spoofing, HTML smuggling) via <code>127.0.0.1:49152/gateway/scan-email</code> and enforces block-scoped OS DNS sinkholing.
               </p>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span id="gateway-sinkhole-badge" class="sev-badge sev-Safe">GATEWAY ACTIVE</span>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span id="gateway-sinkhole-badge" class="sev-badge sev-Safe">OPT-IN STANDBY</span>
+              <button type="button" class="btn btn-outline" id="btn-toggle-http-gateway" style="padding:6px 12px;font-size:0.8rem;" title="Enable or disable the local HTTP POST /gateway/* endpoints on 127.0.0.1:49152 (opt-in)">
+                🔌 Enable HTTP Gateway (:49152)
+              </button>
               <button type="button" class="btn btn-primary" id="btn-toggle-gateway-sinkhole" style="padding:6px 12px;font-size:0.8rem;">
                 🛡️ Enable OS DNS Sinkhole
               </button>
