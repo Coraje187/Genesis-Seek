@@ -1174,12 +1174,12 @@ fn handle_bridge_connection(
                 let (ctype, disp) = if is_download {
                     (
                         "application/octet-stream",
-                        "attachment; filename=\"Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi\"",
+                        "attachment; filename=\"Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi\"",
                     )
                 } else {
                     (
                         "application/x-xpinstall",
-                        "inline; filename=\"Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi\"",
+                        "inline; filename=\"Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi\"",
                     )
                 };
                 let hdr = format!(
@@ -1218,7 +1218,7 @@ fn handle_bridge_connection(
                 .join("Genesis-Seek-Browser-Guard");
             let manifest_path = staged_dir.join("manifest.json").to_string_lossy().to_string();
             let xpi_path = staged_dir
-                .join("Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi")
+                .join("Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi")
                 .to_string_lossy()
                 .to_string();
             let html = format!(
@@ -1226,7 +1226,7 @@ fn handle_bridge_connection(
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Genesis Seek v0.3.8 — Firefox Extension Installer</title>
+<title>Genesis Seek v0.4.0 — Firefox Extension Installer</title>
 <style>
   body {{ background:#090d16; color:#f1f5f9; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0; padding:24px; }}
   .card {{ max-width:720px; width:100%; background:#101726; border:1px solid #1f2d47; border-radius:16px; padding:32px; box-shadow:0 16px 40px rgba(0,0,0,0.45); }}
@@ -1246,11 +1246,11 @@ fn handle_bridge_connection(
 </head>
 <body>
   <div class="card">
-    <span class="badge">🛡️ GENESIS SEEK BROWSER GUARD v0.3.8 — FIREFOX INSTALLER</span>
+    <span class="badge">🛡️ GENESIS SEEK BROWSER GUARD v0.4.0 — FIREFOX INSTALLER</span>
     <h1>Install Genesis Seek Browser Guard in Firefox</h1>
     <div class="warn-box">
       <strong>✓ Valid POSIX .XPI Package &amp; Profile Hooks Ready!</strong><br>
-      Genesis Seek generated a BOM-free v0.3.8 XPI package and provisioned <code>extensions/browser-guard@genesisseek.io.xpi</code> + <code>user.js</code> across your Firefox profiles (Developer Edition, Nightly, ESR &amp; Linux builds activate it automatically on restart).
+      Genesis Seek generated a BOM-free v0.4.0 XPI package and provisioned <code>extensions/browser-guard@genesisseek.io.xpi</code> + <code>user.js</code> across your Firefox profiles (Developer Edition, Nightly, ESR &amp; Linux builds activate it automatically on restart).
     </div>
 
     <div class="step">
@@ -1258,7 +1258,7 @@ fn handle_bridge_connection(
       <div style="font-size:0.86rem;color:#94a3b8;">Click below to trigger Firefox's native add-on prompt or save the repaired <code>.xpi</code> file:</div>
       <div class="btn-row">
         <a class="btn" href="/genesis-seek-browser-guard.xpi">⚡ 1-Click Install .XPI in Firefox</a>
-        <a class="btn btn-sec" href="/genesis-seek-browser-guard.xpi?download=1">💾 Download v0.3.8 .XPI File</a>
+        <a class="btn btn-sec" href="/genesis-seek-browser-guard.xpi?download=1">💾 Download v0.4.0 .XPI File</a>
       </div>
       <code id="xpi-path">{xpi_path}</code>
       <button onclick="navigator.clipboard.writeText(document.getElementById('xpi-path').textContent); this.textContent='✓ Copied .XPI Path!'; this.classList.add('copied');">

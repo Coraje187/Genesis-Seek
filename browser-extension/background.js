@@ -2,7 +2,7 @@
 const DESKTOP_BRIDGE_URL = "http://127.0.0.1:49152/check?url=";
 const DESKTOP_BRIDGE_STATUS = "http://127.0.0.1:49152/status";
 const GITHUB_RELEASE_API = "https://api.github.com/repos/Coraje187/Genesis-Seek/releases/latest";
-const CURRENT_EXTENSION_VERSION = "0.3.8";
+const CURRENT_EXTENSION_VERSION = "0.4.0";
 
 // 1. Inspect navigation events for phishing, malware, and IDN homographs
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {

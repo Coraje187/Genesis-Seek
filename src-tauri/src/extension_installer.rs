@@ -304,7 +304,7 @@ fn materialize_embedded_extension(target_dir: &Path, is_firefox: bool) {
     if is_firefox {
         if let Ok(xpi_bytes) = build_valid_firefox_xpi_bytes() {
             let _ = fs::write(
-                target_dir.join("Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi"),
+                target_dir.join("Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi"),
                 &xpi_bytes,
             );
             let _ = fs::write(target_dir.join("browser-guard@genesisseek.io.xpi"), &xpi_bytes);
@@ -859,11 +859,11 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
     }
 
     // 2. Mozilla Firefox:
-    //    Stage unpacked files + valid v0.3.8 `.xpi`, provision Firefox profile `extensions/*.xpi` (and opt-in
+    //    Stage unpacked files + valid v0.4.0 `.xpi`, provision Firefox profile `extensions/*.xpi` (and opt-in
     //    `user.js` only if autoload is enabled), attempt live Marionette injection, and open the local Guided Installer.
     if is_firefox {
         let xpi_path = staged_dir
-            .join("Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi")
+            .join("Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi")
             .to_string_lossy()
             .to_string();
         let allow_unsigned = realtime_shield::current_shields().browser_extension_autoload;
@@ -876,7 +876,7 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
             realtime_shield::log_security_event(
                 "Browser Guard",
                 "Info",
-                "Injected Browser Guard v0.3.8 into Active Firefox",
+                "Injected Browser Guard v0.4.0 into Active Firefox",
                 &staged_path_str,
                 "Extension Loaded via Marionette",
             );
@@ -887,7 +887,7 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
                 extension_path: xpi_path,
                 method_used: "Marionette Live Injection + XPI Staged".to_string(),
                 message: format!(
-                    "Genesis Seek Browser Guard v0.3.8 was injected into your active Firefox session and staged to {} ({} Firefox profile(s) provisioned).",
+                    "Genesis Seek Browser Guard v0.4.0 was injected into your active Firefox session and staged to {} ({} Firefox profile(s) provisioned).",
                     staged_path_str, profiles_updated
                 ),
             });
@@ -906,7 +906,7 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
         realtime_shield::log_security_event(
             "Browser Guard",
             "Info",
-            "Staged Firefox XPI v0.3.8 & Opened Guided Installer",
+            "Staged Firefox XPI v0.4.0 & Opened Guided Installer",
             &xpi_path,
             &format!("Provisioned {} Firefox profile(s)", profiles_updated),
         );
@@ -917,7 +917,7 @@ pub fn install_extension_for_browser(browser_id: &str) -> Result<ExtensionInstal
             extension_path: xpi_path.clone(),
             method_used: "Valid .XPI Staged + Local Guided Installer".to_string(),
             message: format!(
-                "Valid v0.3.8 .XPI package generated at:\n{}\n({} Firefox profile(s) provisioned).\nFollow the opened Guided Installer tab to install or load via about:debugging!",
+                "Valid v0.4.0 .XPI package generated at:\n{}\n({} Firefox profile(s) provisioned).\nFollow the opened Guided Installer tab to install or load via about:debugging!",
                 xpi_path, profiles_updated
             ),
         });
@@ -1073,7 +1073,7 @@ pub fn sync_dynamic_browser_rules(domains: &std::collections::HashSet<String>) -
                 let _ = fs::write(staged_ff.join("rules.json"), &json);
                 if let Ok(xpi_bytes) = build_valid_firefox_xpi_bytes() {
                     let _ = fs::write(
-                        staged_ff.join("Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi"),
+                        staged_ff.join("Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi"),
                         &xpi_bytes,
                     );
                     let _ = fs::write(staged_ff.join("browser-guard@genesisseek.io.xpi"), &xpi_bytes);

@@ -9,31 +9,33 @@
 
 ---
 
-## 📥 Downloads & Installation (v0.3.8 Enterprise)
+## 📥 Downloads & Installation (v0.4.0 Enterprise)
 
 ### 🪟 Windows (10 / 11)
-* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
-* **Portable Archive**: [**genesis-seek-v0.3.8-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-windows-x86_64.zip)
+* **Standalone Binary**: [**genesis-seek.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek.exe) *(Includes native system tray indicator and background persistence)*
+* **NSIS Setup Installer**: [**Genesis.Seek_0.4.0_x64-setup.exe**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis.Seek_0.4.0_x64-setup.exe)
+* **MSI Enterprise Package**: [**Genesis.Seek_0.4.0_x64_en-US.msi**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis.Seek_0.4.0_x64_en-US.msi)
+* **Portable Archive**: [**genesis-seek-v0.4.0-windows-x86_64.zip**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek-v0.4.0-windows-x86_64.zip)
 
 ### 🐧 Linux (Arch / CachyOS, Ubuntu, Debian, Fedora)
 * **One-Line Automatic Terminal Installer**:
   ```bash
   curl -sSL https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh | bash
   ```
-* **Standalone AppImage**: [**Genesis-Seek-0.3.8-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-0.3.8-x86_64.AppImage)
-* **Linux Archive**: [**genesis-seek-v0.3.8-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/genesis-seek-v0.3.8-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**Genesis-Seek-0.4.0-x86_64.AppImage**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-0.4.0-x86_64.AppImage)
+* **Linux Archive**: [**genesis-seek-v0.4.0-linux-x86_64.tar.gz**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek-v0.4.0-linux-x86_64.tar.gz)
 
 ### 🌐 Browser Guard Extensions
 
 | Browser | Package / Link | Installation Guide |
 | :--- | :--- | :--- |
-| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.3.8.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
-| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.3.8/Genesis-Seek-Browser-Guard-for-Firefox-v0.3.8.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
+| **Microsoft Edge, Chrome & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.0.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.0.zip) | Extract zip, navigate to `edge://extensions` or `chrome://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi) | Drag and drop the `.xpi` into Firefox, or load via `about:debugging#/runtime/this-firefox`. |
 | **Mozilla Add-ons (AMO)** | [**Official Firefox AMO Store**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click official store installation and auto-updates. |
 
 ---
 
-## ✨ Core Enterprise Protection Layers (v0.3.8)
+## ✨ Core Enterprise Protection Layers (v0.4.0)
 
 1. **Multi-Engine File, Archive & Container Scanner ([`src-tauri/src/scanner.rs`](src-tauri/src/scanner.rs))**
    - **Recursive Unpacking & De-Obfuscation**: Inspects nested `.zip`/OpenXML (with ZipSlip, ZipBomb, encrypted executable dropper, and Office `vbaProject.bin`/OLE2 macro detection), `.tar.gz`/`.tgz`/GZIP, PDF `FlateDecode` streams (`/OpenAction`/`/JS`/`/Launch`), Base64/UTF-16LE stagers, 64 KB EOF overlays, and optional local ClamAV `clamd` (`zINSTREAM\0`) socket scanning.
@@ -72,6 +74,19 @@
 ---
 
 ## 📋 Changelog
+
+### 🚀 What's New in v0.4.0 Enterprise (Mail Gateway, Stream Gateway, DNS Sinkhole & Zero-FP Installer Guard)
+* **RFC 5322 Mail Gateway & Multi-Part MIME Unpacker (`scanner.rs`, `realtime_shield.rs`):**
+  - Inspects `.eml`, `.msg`, `.oft`, and `.mbox` mail spools alongside a live HTTP Mail Gateway endpoint (`POST http://127.0.0.1:49152/gateway/scan-email`).
+  - Parses headers (`From`, `Reply-To`, `Return-Path`, `Authentication-Results`) for display-name brand spoofing, cross-domain `Reply-To` phishing, and `spf=fail` / `dkim=fail` / `dmarc=fail` anomalies.
+  - Recursively decodes `multipart/*` boundaries (`base64` & `quoted-printable`), inspects HTML body links for phishing/UNC/homograph URLs, and routes every attachment (`.zip`, `.tar.gz`, Office macros, PDFs, `.lnk`, executables) through the full 5-layer scanner.
+* **ICAP-Style Local Stream & Proxy Gateway (`POST /gateway/scan-stream`):**
+  - Scans raw byte streams in-memory (`127.0.0.1:49152/gateway/scan-stream`) for browser downloads, local proxies, and mail relays before files touch user folders.
+* **OS Network & DNS Sinkhole Gateway + Outbound WAN SMB Relay Guard (`threat_intel_and_net.rs`):**
+  - Optional OS-level `/etc/hosts` & `C:\Windows\System32\drivers\etc\hosts` DNS Sinkhole Gateway (`0.0.0.0`) protecting non-browser apps, mail clients, and CLI tools, with 1-click clean rollback.
+  - Detects outbound port `445` (`SMB`) connections to public WAN IP addresses (`Exploit.Net.OutboundWanSmbRelay_CVE_2023_23397`) while allowing normal RFC 1918 LAN file shares.
+* **Zero False-Positive Installer & MSI Guard (`scanner.rs`, `process_guard.rs`, `realtime_shield.rs`):**
+  - Eliminated false-positive quarantines on Windows `.msi` packages (OLE2 Compound Documents), official software installers (`Firefox Installer.exe`, 7-Zip SFX `setup-stub.exe` / `7zS...` / `7zO...` temp folders), and in-progress browser downloads (`.crdownload`, `.part`, `.opdownload`).
 
 ### 🚀 What's New in v0.3.8 Enterprise (System Watcher Rollback, Memory Hollowing Guard, Deep Unpacking & XPI Fix)
 * **System Watcher Pre-Encryption Shadow Journal & Automatic File Rollback (`realtime_shield.rs`):**
