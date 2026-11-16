@@ -1668,6 +1668,15 @@ function renderSystemAuditReport(report) {
   }
   if (badgeEl) {
     badgeEl.textContent = `${report.hardening_score}%`;
+    if (report.hardening_score >= 85) {
+      badgeEl.style.background = "rgba(16, 185, 129, 0.16)";
+      badgeEl.style.color = "var(--accent-emerald)";
+      badgeEl.style.borderColor = "rgba(16, 185, 129, 0.38)";
+    } else if (report.hardening_score >= 60) {
+      badgeEl.style.background = "rgba(245, 158, 11, 0.16)";
+      badgeEl.style.color = "var(--accent-amber)";
+      badgeEl.style.borderColor = "rgba(245, 158, 11, 0.38)";
+    }
   }
   if (passedEl) passedEl.textContent = `${report.passed_checks}/${report.total_checks}`;
   if (warnEl) warnEl.textContent = `${report.warnings_count + report.critical_count}`;
