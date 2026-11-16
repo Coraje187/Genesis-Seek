@@ -1431,6 +1431,21 @@ fn handle_bridge_connection(
         } else {
             http_json("200 OK", include_str!("../../sentinel_profile.json"), false)
         }
+    } else if target.starts_with("/audit") {
+        if restrict_sensitive_endpoint {
+            http_json(
+                "403 Forbidden",
+                r#"{"error":"Access denied: system audit restricted to local clients"}"#,
+                false,
+            )
+        } else {
+            let report = crate::system_audit::run_system_audit();
+            http_json(
+                "200 OK",
+                &serde_json::to_string(&report).unwrap_or_else(|_| "{}".to_string()),
+                false,
+            )
+        }
     } else {
         http_json(
             "200 OK",

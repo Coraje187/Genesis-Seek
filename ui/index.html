@@ -167,6 +167,10 @@
           <span class="nav-dot"></span> Quarantine Vault
           <span id="quarantine-badge" class="badge">0</span>
         </button>
+        <button type="button" class="nav-item" data-tab="system-audit" onclick="window.switchTab('system-audit')">
+          <span class="nav-dot"></span> System Audit &amp; Hardening
+          <span id="audit-score-badge" class="badge">--</span>
+        </button>
         <button type="button" class="nav-item" data-tab="events" onclick="window.switchTab('events')">
           <span class="nav-dot"></span> Real-Time Event Log
         </button>
@@ -873,7 +877,68 @@
         </div>
       </section>
 
-      <!-- TAB 7: REAL-TIME EVENT LOG -->
+      <!-- TAB 7: SYSTEM POSTURE AUDIT & 1-CLICK AUTO-HARDENING -->
+      <section class="tab-panel" id="tab-system-audit">
+        <div class="panel-card" style="margin-bottom: 16px;">
+          <div class="panel-header">
+            <div>
+              <h3>🛡️ Host Security Posture Audit &amp; 1-Click Auto-Hardening</h3>
+              <p class="muted small">Lynis-grade Linux &amp; host configuration auditing: Kernel ASLR/eBPF/ptrace, Network SYN/ICMP stack, SUID rootkit scan, AppArmor/Firewall, and SSH/Mount hardening.</p>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-outline" id="btn-run-system-audit">🔍 Run Full Audit</button>
+              <button class="btn btn-primary" id="btn-auto-harden-all">⚡ 1-Click Auto-Harden All</button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));gap:12px;margin-top:12px;">
+            <div class="stat-box">
+              <span class="stat-val" id="audit-score-val" style="color:var(--accent-primary);">--/100</span>
+              <span class="stat-lbl">Hardening Index</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val text-ok" id="audit-passed-val">0</span>
+              <span class="stat-lbl">Checks Passed</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val text-warn" id="audit-warnings-val">0</span>
+              <span class="stat-lbl">Warnings / Exposed</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-val" id="audit-os-val" style="font-size:0.95rem;">--</span>
+              <span class="stat-lbl" id="audit-kernel-val">Kernel --</span>
+            </div>
+          </div>
+
+          <div id="audit-suid-alert" style="display:none;margin-top:12px;padding:10px 14px;border-radius:8px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);color:#fca5a5;font-size:0.84rem;">
+            <strong>⚠️ Flagged SUID Binaries:</strong> <span id="audit-suid-list"></span>
+          </div>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>Security Configuration &amp; Hardening Findings</h3>
+            <span class="pill-tag" id="audit-timestamp-pill">Not scanned yet</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Security Check</th>
+                  <th>Status</th>
+                  <th>Current State</th>
+                  <th>Hardened Target</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="system-audit-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 8: REAL-TIME EVENT LOG -->
       <section class="tab-panel" id="tab-events">
         <div class="panel-card">
           <div class="panel-header">

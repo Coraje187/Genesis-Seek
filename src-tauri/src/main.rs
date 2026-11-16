@@ -6,6 +6,7 @@ mod process_guard;
 mod quarantine;
 mod realtime_shield;
 mod scanner;
+mod system_audit;
 mod threat_alert;
 mod threat_intel_and_net;
 mod tray_indicator;
@@ -422,6 +423,16 @@ fn harden_linux_kernel_mptcp(disable_mptcp: bool) -> Result<kernel_defense::Linu
 }
 
 #[tauri::command]
+fn get_system_audit_report() -> system_audit::SystemAuditReport {
+    system_audit::run_system_audit()
+}
+
+#[tauri::command]
+fn apply_auto_hardening(fix_ids: Vec<String>) -> Result<system_audit::SystemAuditReport, String> {
+    system_audit::apply_auto_hardening(fix_ids)
+}
+
+#[tauri::command]
 fn inspect_email_gateway_sample(raw_email: String) -> scanner::EmailGatewayReport {
     let report = scanner::inspect_raw_email_gateway("ui://mail-gateway.eml", raw_email.as_bytes(), 0);
     if !report.safe {
@@ -717,6 +728,8 @@ fn main() {
             get_live_memory_usage,
             audit_linux_kernel_mptcp,
             harden_linux_kernel_mptcp,
+            get_system_audit_report,
+            apply_auto_hardening,
             inspect_email_gateway_sample,
             get_network_gateway_status,
             toggle_network_gateway_sinkhole,

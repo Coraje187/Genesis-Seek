@@ -482,6 +482,7 @@ window.onTabActivated = function (tabName) {
   }
   if (tabName === "processes") refreshProcessesAndPersistence();
   if (tabName === "quarantine") refreshQuarantine();
+  if (tabName === "system-audit") refreshSystemAudit();
   if (tabName === "events" || tabName === "dashboard") refreshEvents();
   if (tabName === "browser-guard") renderBrowserExtensionInstaller();
 };
@@ -1630,4 +1631,165 @@ async function refreshLiveMemory() {
       await refreshLiveMemory();
     } catch (e) {}
   }, 2500);
+
+  // Initial background system posture check for sidebar badge
+  refreshSystemAudit().catch(() => {});
+
+  document.getElementById("btn-run-system-audit")?.addEventListener("click", async () => {
+    await refreshSystemAudit();
+  });
+
+  document.getElementById("btn-auto-harden-all")?.addEventListener("click", async () => {
+    await runAutoHardening(["ALL"]);
+  });
 })();
+
+function renderSystemAuditReport(report) {
+  if (!report) return;
+  const scoreEl = document.getElementById("audit-score-val");
+  const passedEl = document.getElementById("audit-passed-val");
+  const warnEl = document.getElementById("audit-warnings-val");
+  const osEl = document.getElementById("audit-os-val");
+  const kernelEl = document.getElementById("audit-kernel-val");
+  const badgeEl = document.getElementById("audit-score-badge");
+  const timePill = document.getElementById("audit-timestamp-pill");
+  const suidAlert = document.getElementById("audit-suid-alert");
+  const suidList = document.getElementById("audit-suid-list");
+  const tbody = document.getElementById("system-audit-tbody");
+
+  if (scoreEl) {
+    scoreEl.textContent = `${report.hardening_score}/100`;
+    scoreEl.style.color =
+      report.hardening_score >= 85
+        ? "var(--accent-emerald)"
+        : report.hardening_score >= 60
+        ? "var(--accent-primary)"
+        : "#ef4444";
+  }
+  if (badgeEl) {
+    badgeEl.textContent = `${report.hardening_score}%`;
+  }
+  if (passedEl) passedEl.textContent = `${report.passed_checks}/${report.total_checks}`;
+  if (warnEl) warnEl.textContent = `${report.warnings_count + report.critical_count}`;
+  if (osEl) osEl.textContent = report.os_name || "Linux";
+  if (kernelEl) kernelEl.textContent = `Kernel ${report.kernel_release || "--"}`;
+  if (timePill) timePill.textContent = `Audited: ${report.last_audited}`;
+
+  if (suidAlert && suidList) {
+    if (report.suid_flagged && report.suid_flagged.length > 0) {
+      suidAlert.style.display = "block";
+      suidList.textContent = report.suid_flagged.join(" • ");
+    } else {
+      suidAlert.style.display = "none";
+    }
+  }
+
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  (report.findings || []).forEach((item) => {
+    const tr = document.createElement("tr");
+
+    const tdCat = document.createElement("td");
+    tdCat.style.fontWeight = "600";
+    tdCat.textContent = item.category;
+
+    const tdTitle = document.createElement("td");
+    const divTitle = document.createElement("div");
+    divTitle.style.fontWeight = "700";
+    divTitle.textContent = item.title;
+    const divDesc = document.createElement("div");
+    divDesc.className = "muted small";
+    divDesc.textContent = item.description;
+    tdTitle.appendChild(divTitle);
+    tdTitle.appendChild(divDesc);
+
+    const tdStatus = document.createElement("td");
+    const spanBadge = document.createElement("span");
+    spanBadge.className = "pill-tag";
+    if (item.status === "PASS") {
+      spanBadge.style.borderColor = "var(--accent-emerald)";
+      spanBadge.style.color = "var(--accent-emerald)";
+      spanBadge.textContent = "✓ PASS";
+    } else if (item.status === "FAIL") {
+      spanBadge.style.borderColor = "#ef4444";
+      spanBadge.style.color = "#ef4444";
+      spanBadge.textContent = "✕ CRITICAL";
+    } else {
+      spanBadge.style.borderColor = "#f59e0b";
+      spanBadge.style.color = "#f59e0b";
+      spanBadge.textContent = "⚠ WARN";
+    }
+    tdStatus.appendChild(spanBadge);
+
+    const tdCur = document.createElement("td");
+    const codeCur = document.createElement("code");
+    codeCur.textContent = item.current_value;
+    tdCur.appendChild(codeCur);
+
+    const tdExp = document.createElement("td");
+    const codeExp = document.createElement("code");
+    codeExp.textContent = item.expected_value;
+    tdExp.appendChild(codeExp);
+
+    const tdAction = document.createElement("td");
+    if (item.status === "PASS") {
+      const spanOk = document.createElement("span");
+      spanOk.className = "text-ok small";
+      spanOk.textContent = "Hardened";
+      tdAction.appendChild(spanOk);
+    } else if (item.can_auto_fix) {
+      const btn = document.createElement("button");
+      btn.className = "btn btn-primary btn-sm";
+      btn.textContent = "Auto-Fix";
+      btn.title = item.fix_description;
+      btn.addEventListener("click", () => runAutoHardening([item.id]));
+      tdAction.appendChild(btn);
+    } else {
+      const spanInfo = document.createElement("span");
+      spanInfo.className = "muted small";
+      spanInfo.textContent = "Advisory";
+      tdAction.appendChild(spanInfo);
+    }
+
+    tr.appendChild(tdCat);
+    tr.appendChild(tdTitle);
+    tr.appendChild(tdStatus);
+    tr.appendChild(tdCur);
+    tr.appendChild(tdExp);
+    tr.appendChild(tdAction);
+    tbody.appendChild(tr);
+  });
+}
+
+async function refreshSystemAudit() {
+  const btn = document.getElementById("btn-run-system-audit");
+  if (btn) btn.disabled = true;
+  try {
+    const report = await invokeBackend("get_system_audit_report");
+    renderSystemAuditReport(report);
+  } catch (err) {
+    console.warn("System audit failed:", err);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function runAutoHardening(fixIds) {
+  const btn = document.getElementById("btn-auto-harden-all");
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "⏳ Applying Hardening...";
+  }
+  try {
+    const updated = await invokeBackend("apply_auto_hardening", { fixIds });
+    renderSystemAuditReport(updated);
+    await refreshEvents();
+  } catch (err) {
+    alert(`Hardening note: ${err}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "⚡ 1-Click Auto-Harden All";
+    }
+  }
+}
