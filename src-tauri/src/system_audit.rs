@@ -104,6 +104,23 @@ fn scan_suid_binaries() -> (Vec<String>, usize) {
         "crontab",
         "at",
         "Xorg.wrap",
+        "mount.nfs",
+        "mount.cifs",
+        "mount.ntfs-3g",
+        "ntfs-3g",
+        "pppd",
+        "ssh-agent",
+        "VBoxHeadless",
+        "VBoxSDL",
+        "VBoxNetAdpCtl",
+        "VBoxNetDHCP",
+        "locate",
+        "mlocate",
+        "postdrop",
+        "postqueue",
+        "pam_timestamp_check",
+        "userhelper",
+        "suexec",
     ]
     .into_iter()
     .collect();
@@ -119,10 +136,15 @@ fn scan_suid_binaries() -> (Vec<String>, usize) {
     .collect();
 
     let scan_dirs = ["/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin"];
+    let mut seen_dirs = HashSet::new();
     let mut flagged = Vec::new();
     let mut total_suid = 0usize;
 
     for dir in &scan_dirs {
+        let canon = fs::canonicalize(dir).unwrap_or_else(|_| Path::new(dir).to_path_buf());
+        if !seen_dirs.insert(canon) {
+            continue;
+        }
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -337,7 +359,7 @@ pub fn run_system_audit() -> SystemAuditReport {
         "Set net.mptcp.enabled = 0",
     );
 
-    // 3. Mandatory Access Control (AppArmor / SELinux)
+    // 3. Mandatory Access Control (AppArmor / SELinux / Landlock LSM)
     let apparmor_on = Path::new("/sys/kernel/security/apparmor/profiles").exists()
         || fs::read_to_string("/sys/module/apparmor/parameters/enabled")
             .map(|s| s.trim() == "Y")
@@ -345,24 +367,31 @@ pub fn run_system_audit() -> SystemAuditReport {
     let selinux_on = fs::read_to_string("/sys/fs/selinux/enforce")
         .map(|s| s.trim() == "1")
         .unwrap_or(false);
-    let mac_active = apparmor_on || selinux_on;
+    let lsm_list = fs::read_to_string("/sys/kernel/security/lsm").unwrap_or_default();
+    let landlock_on = lsm_list.contains("landlock");
+    let lockdown_on = lsm_list.contains("lockdown");
+    let mac_active = apparmor_on || selinux_on || landlock_on;
     findings.push(AuditFinding {
         id: "FRAMEWORK_MAC".into(),
         category: "Security Frameworks".into(),
-        title: "Mandatory Access Control (AppArmor / SELinux)".into(),
+        title: "Linux Security Modules (AppArmor / SELinux / Landlock)".into(),
         status: if mac_active { "PASS".into() } else { "WARN".into() },
         current_value: if apparmor_on {
             "AppArmor Active".into()
         } else if selinux_on {
             "SELinux Enforcing".into()
+        } else if landlock_on && lockdown_on {
+            "Landlock + Lockdown LSM Active".into()
+        } else if landlock_on {
+            "Landlock LSM Active".into()
         } else {
             "Not Enforced".into()
         },
-        expected_value: "AppArmor or SELinux Active".into(),
+        expected_value: "AppArmor, SELinux, or Landlock LSM".into(),
         severity: if mac_active { "Low".into() } else { "Medium".into() },
-        description: "Confines applications and daemons to strict filesystem and capability sandboxes.".into(),
+        description: "Confines applications and daemons to strict filesystem and kernel sandboxes via active LSMs.".into(),
         can_auto_fix: false,
-        fix_description: "Enable AppArmor or SELinux via kernel boot parameters.".into(),
+        fix_description: "Enable AppArmor, SELinux, or Landlock LSM in kernel boot parameters.".into(),
     });
 
     // 4. Firewall Status (UFW / firewalld / nftables)

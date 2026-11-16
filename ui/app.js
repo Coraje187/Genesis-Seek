@@ -1704,6 +1704,7 @@ function renderSystemAuditReport(report) {
     tdTitle.appendChild(divDesc);
 
     const tdStatus = document.createElement("td");
+    tdStatus.style.whiteSpace = "nowrap";
     const spanBadge = document.createElement("span");
     spanBadge.className = "pill-tag";
     if (item.status === "PASS") {
@@ -1723,15 +1724,20 @@ function renderSystemAuditReport(report) {
 
     const tdCur = document.createElement("td");
     const codeCur = document.createElement("code");
+    codeCur.style.whiteSpace = "normal";
+    codeCur.style.wordBreak = "break-word";
     codeCur.textContent = item.current_value;
     tdCur.appendChild(codeCur);
 
     const tdExp = document.createElement("td");
     const codeExp = document.createElement("code");
+    codeExp.style.whiteSpace = "normal";
+    codeExp.style.wordBreak = "break-word";
     codeExp.textContent = item.expected_value;
     tdExp.appendChild(codeExp);
 
     const tdAction = document.createElement("td");
+    tdAction.style.whiteSpace = "nowrap";
     if (item.status === "PASS") {
       const spanOk = document.createElement("span");
       spanOk.className = "text-ok small";

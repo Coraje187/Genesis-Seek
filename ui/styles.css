@@ -515,6 +515,10 @@ input:checked + .slider:before {
 }
 
 .pill-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
   background: var(--pill-bg);
   color: var(--accent-primary);
   border: 1px solid var(--pill-border);
