@@ -5,6 +5,24 @@
 
 ---
 
+## [v0.4.1 Enterprise] — 2026-11-16
+### Lynis-Grade System Posture Audit, SUID Rootkit Scanner & 1-Click Auto-Hardening
+
+#### 🚀 New Features
+- **Host Security Posture Audit Engine (`src-tauri/src/system_audit.rs`)**:
+  - Audits 18+ critical OS configuration controls and computes a real-time **Hardening Index (0–100)**.
+  - **Kernel & Memory Hardening:** Inspects ASLR (`kernel.randomize_va_space`), `kptr_restrict`, `dmesg_restrict`, `unprivileged_bpf_disabled`, Yama `ptrace_scope`, and `suid_dumpable`.
+  - **Network Stack Protection:** Checks TCP SYN flood cookies (`tcp_syncookies`), reverse-path filtering (`rp_filter`), ICMP redirect blocking, and MPTCP stack state.
+  - **SUID Privilege Escalation Scanner:** Scans `/usr/bin`, `/usr/sbin`, `/usr/local/bin`, and `/usr/local/sbin` against a curated Linux baseline and flags high-risk GTFOBins SUID vectors.
+  - **Filesystem, Mounts, MAC & SSH:** Audits `/dev/shm` (`noexec,nosuid,nodev`), `/etc/shadow` permissions, AppArmor/SELinux enforcement, Firewall status (`ufw`/`firewalld`/`nftables`), SSH `PermitRootLogin`, and password hashing algorithms.
+- **1-Click Auto-Harden Engine**:
+  - Safely persists hardened sysctl configurations to `/etc/sysctl.d/99-genesis-seek-hardening.conf`, secures `/dev/shm` and `/etc/shadow`, configures UFW/SSH protections, and reloads live policies via `pkexec` in one click.
+- **New UI Dashboard Tab & Bridge Endpoint**:
+  - Added **System Audit & Hardening** tab in `ui/index.html` & `ui/app.js` with live percentage badge, individual Auto-Fix buttons, and 1-click full hardening.
+  - Added `GET /audit` endpoint on the local loopback bridge (`127.0.0.1:49152/audit`).
+
+---
+
 ## [v0.4.0 Enterprise] — 2026-11-14
 ### Mail Gateway, Stream Gateway, DNS Sinkhole & Zero-FP Installer Guard
 

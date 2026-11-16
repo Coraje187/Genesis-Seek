@@ -5,7 +5,7 @@
   <img src="ui/assets/logo-emblem-cream.jpg" alt="Genesis Seek Warm Cream Emblem" width="200" />
 </p>
 
-**Genesis Seek (`v0.4.0`)** is a lightweight (~14–34 MB RAM), open-source endpoint and browser security companion built in **Rust + Tauri v2** for **Windows and Linux**, paired with a **Manifest V3 Browser Guard Extension**.
+**Genesis Seek (`v0.4.1`)** is a lightweight (~14–34 MB RAM), open-source endpoint and browser security companion built in **Rust + Tauri v2** for **Windows and Linux**, paired with a **Manifest V3 Browser Guard Extension**.
 
 It is designed for users and developers who want transparent, local-first file & archive inspection, YARA rule matching, MalwareBazaar/URLhaus/PhishStats threat feed syncing, pre-encryption file shadow journaling, and browser phishing/homograph filtering without cloud telemetry.
 
@@ -13,18 +13,18 @@ It is designed for users and developers who want transparent, local-first file &
 
 ---
 
-## 📥 Downloads & Installation (`v0.4.0`)
+## 📥 Downloads & Installation (`v0.4.1`)
 
 ### 🪟 Windows (10 / 11 x64)
-* **NSIS Setup Installer**: [**`Genesis.Seek_0.4.0_x64-setup.exe`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis.Seek_0.4.0_x64-setup.exe)
-* **MSI Package**: [**`Genesis.Seek_0.4.0_x64_en-US.msi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis.Seek_0.4.0_x64_en-US.msi)
-* **Standalone Binary**: [**`genesis-seek.exe`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek.exe)
-* **Portable Archive**: [**`genesis-seek-v0.4.0-windows-x86_64.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek-v0.4.0-windows-x86_64.zip)
+* **NSIS Setup Installer**: [**`Genesis.Seek_0.4.1_x64-setup.exe`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis.Seek_0.4.1_x64-setup.exe)
+* **MSI Package**: [**`Genesis.Seek_0.4.1_x64_en-US.msi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis.Seek_0.4.1_x64_en-US.msi)
+* **Standalone Binary**: [**`genesis-seek.exe`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/genesis-seek.exe)
+* **Portable Archive**: [**`genesis-seek-v0.4.1-windows-x86_64.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/genesis-seek-v0.4.1-windows-x86_64.zip)
 
 ### 🐧 Linux (Ubuntu, Debian, Arch / CachyOS, Fedora x86_64)
-* **Standalone AppImage**: [**`Genesis-Seek-0.4.0-x86_64.AppImage`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-0.4.0-x86_64.AppImage)
-* **Debian / Ubuntu Package**: [**`Genesis.Seek_0.4.0_amd64.deb`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis.Seek_0.4.0_amd64.deb)
-* **Portable Tarball**: [**`genesis-seek-v0.4.0-linux-x86_64.tar.gz`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/genesis-seek-v0.4.0-linux-x86_64.tar.gz)
+* **Standalone AppImage**: [**`Genesis-Seek-0.4.1-x86_64.AppImage`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis-Seek-0.4.1-x86_64.AppImage)
+* **Debian / Ubuntu Package**: [**`Genesis.Seek_0.4.1_amd64.deb`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis.Seek_0.4.1_amd64.deb)
+* **Portable Tarball**: [**`genesis-seek-v0.4.1-linux-x86_64.tar.gz`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/genesis-seek-v0.4.1-linux-x86_64.tar.gz)
 * **Installer Script (Inspect First, Then Run)**:
   ```bash
   curl -sSLO https://raw.githubusercontent.com/Coraje187/Genesis-Seek/main/install.sh
@@ -33,7 +33,7 @@ It is designed for users and developers who want transparent, local-first file &
   ```
 
 ### 🔐 Verifying Release Checksums (`SHA256SUMS.txt`)
-Every GitHub Release publishes [`SHA256SUMS.txt`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/SHA256SUMS.txt). Verify your download before running:
+Every GitHub Release publishes [`SHA256SUMS.txt`](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/SHA256SUMS.txt). Verify your download before running:
 ```bash
 # Linux
 sha256sum -c SHA256SUMS.txt --ignore-missing
@@ -47,8 +47,8 @@ Get-FileHash .\genesis-seek.exe -Algorithm SHA256
 | Browser | Package / Link | Installation |
 | :--- | :--- | :--- |
 | **Mozilla Firefox (Official Store)** | [**Mozilla Add-ons (AMO)**](https://addons.mozilla.org/en-US/firefox/addon/genesis-seek-browser-guard/) | 1-Click signed installation and automatic updates. |
-| **Mozilla Firefox (`.xpi` / Source)** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-Browser-Guard-for-Firefox-v0.4.0.xpi) | Load via `about:debugging#/runtime/this-firefox` (or direct `.xpi` install on Firefox Developer/Nightly/ESR). |
-| **Chrome, Edge & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.0.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.0/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.0.zip) | Extract zip, open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
+| **Mozilla Firefox (`.xpi` / Source)** | [**`Genesis-Seek-Browser-Guard-for-Firefox-v0.4.1.xpi`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis-Seek-Browser-Guard-for-Firefox-v0.4.1.xpi) | Load via `about:debugging#/runtime/this-firefox` (or direct `.xpi` install on Firefox Developer/Nightly/ESR). |
+| **Chrome, Edge & Brave** | [**`Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.1.zip`**](https://github.com/Coraje187/Genesis-Seek/releases/download/v0.4.1/Genesis-Seek-Browser-Guard-for-Chrome-and-Edge-v0.4.1.zip) | Extract zip, open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, and click **"Load unpacked"**. |
 
 ---
 

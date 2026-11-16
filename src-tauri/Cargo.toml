@@ -1,6 +1,6 @@
 [package]
 name = "genesis-seek"
-version = "0.4.0"
+version = "0.4.1"
 description = "Genesis Seek - Cross-Platform Endpoint Scanner, Pre-Execution Guard & Browser Protection Suite"
 authors = ["Genesis Grid Labs"]
 license = "MIT"
